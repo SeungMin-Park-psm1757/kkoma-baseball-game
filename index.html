@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#10233f">
+  <title>꼬마 야구단</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <button class="brand" data-screen="home" aria-label="홈으로 가기">
+        <span class="brand-ball">●</span>
+        <span>꼬마 야구단</span>
+      </button>
+      <button id="soundToggle" class="icon-button" type="button" aria-label="소리 켜기">🔊</button>
+    </header>
+
+    <section id="homeScreen" class="screen active" aria-labelledby="homeTitle">
+      <div class="home-copy">
+        <p class="eyebrow">오늘의 한 판</p>
+        <h1 id="homeTitle">공이 오면,<br><span>힘껏 쳐요!</span></h1>
+        <p class="lead">타이밍을 맞춰 안타와 홈런을 만들고<br>목표 점수에 먼저 도착해 보세요.</p>
+        <button id="startButton" class="primary-button large" type="button">게임 시작 <span>→</span></button>
+      </div>
+      <div class="home-art" aria-label="야구장 일러스트">
+        <img src="assets/01-home-hero.png" alt="한국 동네 야구장에서 타격을 준비하는 어린이" class="home-hero-image">
+      </div>
+    </section>
+
+    <section id="characterScreen" class="screen" aria-labelledby="characterTitle">
+      <div class="section-heading">
+        <button class="back-button" data-screen="home" type="button">← 뒤로</button>
+        <p class="eyebrow">1단계</p>
+        <h2 id="characterTitle">누가 타석에 설까요?</h2>
+        <p>마음에 드는 친구를 골라 주세요.</p>
+      </div>
+      <div id="characterCards" class="character-grid"></div>
+      <button id="characterNext" class="primary-button" type="button">경기장 고르기 <span>→</span></button>
+    </section>
+
+    <section id="levelScreen" class="screen" aria-labelledby="levelTitle">
+      <div class="section-heading">
+        <button class="back-button" data-screen="character" type="button">← 뒤로</button>
+        <p class="eyebrow">2단계</p>
+        <h2 id="levelTitle">어디서 연습할까요?</h2>
+        <p>새 경기장은 한 단계씩 열려요.</p>
+      </div>
+      <div id="levelCards" class="level-grid"></div>
+    </section>
+
+    <section id="gameScreen" class="screen game-screen" aria-labelledby="gameTitle">
+      <div class="game-head">
+        <div>
+          <p id="gameEyebrow" class="eyebrow">LEVEL 1</p>
+          <h2 id="gameTitle">동네 야구장</h2>
+        </div>
+        <button id="pauseButton" class="pause-button" type="button">Ⅱ</button>
+      </div>
+      <div class="scoreboard" aria-live="polite">
+        <div><span>내 점수</span><strong id="scoreValue">0</strong></div>
+        <div class="score-target"><span>목표</span><strong id="targetValue">3</strong></div>
+        <div><span>스트라이크</span><strong id="strikeValue">0 / 3</strong></div>
+        <div><span>아웃</span><strong id="outValue">0 / 3</strong></div>
+      </div>
+      <div class="game-wrap">
+        <canvas id="gameCanvas" width="960" height="540" aria-label="야구 타격 게임"></canvas>
+        <div id="pitchHint" class="pitch-hint">공을 보고 눌러요!</div>
+      </div>
+      <div class="game-controls">
+        <p id="gameMessage" class="game-message" aria-live="assertive">준비되면 공이 날아와요.</p>
+        <div class="bases" aria-label="베이스 상황">
+          <span id="base3" class="base">3루</span><span id="base2" class="base">2루</span><span id="base1" class="base">1루</span>
+        </div>
+        <button id="swingButton" class="swing-button" type="button">⚾ 지금 쳐요!</button>
+      </div>
+    </section>
+
+    <section id="resultScreen" class="screen result-screen" aria-labelledby="resultTitle">
+      <img id="resultArt" class="result-art" src="assets/09-result-win.png" alt="경기 결과 장면">
+      <div id="resultBadge" class="result-badge">★</div>
+      <p class="eyebrow">경기 결과</p>
+      <h2 id="resultTitle">참 잘했어요!</h2>
+      <p id="resultCopy">좋은 타격이었어요.</p>
+      <div class="result-stats"><span>점수 <strong id="resultScore">0</strong></span><span>홈런 <strong id="resultHomeRuns">0</strong></span></div>
+      <div class="result-actions">
+        <button id="resultPrimary" class="primary-button" type="button">다음 경기 <span>→</span></button>
+        <button id="resultRetry" class="secondary-button" type="button">다시 해보기</button>
+      </div>
+    </section>
+
+    <div id="pausePanel" class="modal" hidden>
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pauseTitle">
+        <button id="closePause" class="modal-close" type="button" aria-label="계속하기">×</button>
+        <p class="eyebrow">잠깐 쉬어요</p>
+        <h2 id="pauseTitle">일시정지</h2>
+        <p>준비가 되면 계속하기를 눌러 주세요.</p>
+        <button id="resumeButton" class="primary-button" type="button">계속하기</button>
+        <button id="quitButton" class="secondary-button" type="button">경기 나가기</button>
+      </div>
+    </div>
+  </main>
+  <script src="game-v2.js"></script>
+</body>
+</html>
