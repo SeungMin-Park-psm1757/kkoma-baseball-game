@@ -58,15 +58,16 @@
         </div>
         <button id="pauseButton" class="pause-button" type="button">Ⅱ</button>
       </div>
-      <div class="scoreboard" aria-live="polite">
+      <div id="scoreboard" class="scoreboard" aria-live="polite">
         <div><span>내 점수</span><strong id="scoreValue">0</strong></div>
         <div class="score-target"><span>목표</span><strong id="targetValue">3</strong></div>
         <div><span>스트라이크</span><strong id="strikeValue">0 / 3</strong></div>
         <div><span>아웃</span><strong id="outValue">0 / 3</strong></div>
       </div>
-      <div class="game-wrap">
+      <div id="gameWrap" class="game-wrap">
         <canvas id="gameCanvas" width="960" height="540" aria-label="야구 타격 게임"></canvas>
         <div id="pitchHint" class="pitch-hint">공을 보고 눌러요!</div>
+        <div id="playEffect" class="play-effect" role="status" aria-live="assertive"></div>
       </div>
       <div class="game-controls">
         <p id="gameMessage" class="game-message" aria-live="assertive">준비되면 공이 날아와요.</p>

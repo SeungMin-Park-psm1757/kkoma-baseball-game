@@ -66,3 +66,15 @@ h2 { font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1.05; letter-spacing: -.0
 
 /* Four compact baseball indicators: score, target, strikes, outs. */
 .scoreboard { grid-template-columns: repeat(4, 1fr); }
+
+.play-effect { position: absolute; left: 50%; top: 38%; z-index: 4; min-width: 230px; padding: 13px 24px; border: 4px solid white; border-radius: 22px; color: white; background: var(--orange); box-shadow: 0 12px 32px rgba(16,35,63,.3); font-size: clamp(1.45rem, 4vw, 2.5rem); font-weight: 1000; text-align: center; transform: translate(-50%, -50%) scale(.5); opacity: 0; pointer-events: none; }
+.play-effect.show { animation: callout .9s cubic-bezier(.2,.9,.25,1) both; }
+.play-effect.safe, .play-effect.runner { background: var(--green); }
+.play-effect.strikeout { background: var(--navy); }
+.game-wrap.fx-out canvas { animation: field-shake .35s ease-out; }
+.game-wrap.fx-runner canvas { animation: field-glow .65s ease-out; }
+.scoreboard.fx-update { animation: score-pop .55s ease-out; }
+@keyframes callout { 0% { opacity: 0; transform: translate(-50%,-50%) scale(.5) rotate(-5deg); } 22%,72% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 100% { opacity: 0; transform: translate(-50%,-62%) scale(1.04); } }
+@keyframes field-shake { 25% { transform: translateX(-6px); } 50% { transform: translateX(5px); } 75% { transform: translateX(-2px); } }
+@keyframes field-glow { 45% { filter: saturate(1.35) brightness(1.08); } }
+@keyframes score-pop { 50% { transform: scale(1.025); box-shadow: 0 0 0 6px rgba(255,201,74,.35); } }
