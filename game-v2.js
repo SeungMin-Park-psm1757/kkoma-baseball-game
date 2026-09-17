@@ -26,9 +26,9 @@ images.runnerStand = new Image(); images.runnerStand.src = "assets/frames/runner
 
 const CONTACT = { x: 370, y: 430 };
 const FIELD_LAYOUTS = {
-  easy: { first: [894, 286], second: [480, 217], third: [65, 286], home: [480, 478], mound: [480, 280] },
-  medium: { first: [842, 307], second: [480, 239], third: [116, 307], home: [480, 474], mound: [480, 307] },
-  hard: { first: [877, 290], second: [480, 225], third: [83, 290], home: [480, 480], mound: [480, 289] }
+  easy: { first: [894, 286], second: [480, 217], third: [65, 286], home: [480, 478], mound: [480, 280], fenceY: 132 },
+  medium: { first: [842, 307], second: [480, 239], third: [116, 307], home: [480, 474], mound: [480, 307], fenceY: 126 },
+  hard: { first: [877, 290], second: [480, 225], third: [83, 290], home: [480, 480], mound: [480, 289], fenceY: 145 }
 };
 let fieldLayout = FIELD_LAYOUTS.easy;
 let BASE_PATH = [];
@@ -136,20 +136,27 @@ function resolveFoul() {
 function resolveHit(delta) {
   let type = "단타"; if (delta < .025) type = "홈런"; else if (delta < .055) type = "3루타"; else if (delta < .09) type = "2루타";
   if (type === "단타" && Math.random() < levels[state.level].groundOutChance) type = "땅볼";
-  state.strikes = 0; state.flight = { start: performance.now(), type, caught: type !== "땅볼" && Math.random() < levels[state.level].catchChance && type !== "홈런", target: chooseFlightTarget(type) };
+  const start = performance.now(), distance = hitDistance(type), preview = buildRunningPlay(state.bases, distance);
+  state.strikes = 0; state.flight = { start, duration: flightDuration(type), type, caught: type !== "땅볼" && Math.random() < levels[state.level].catchChance && type !== "홈런", target: chooseFlightTarget(type) };
+  state.runningPlay = { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
   if (state.action) state.action.outcome = type;
-  state.phase = "flight"; updateHud(); setMessage(type === "홈런" ? "완벽해요! 담장 너머로 날아가요!" : type === "땅볼" ? "땅볼! 수비수가 달려와요!" : `좋아요! ${type} 타구예요.`); tone(type === "홈런" ? 700 : 520, .12);
+  const hitMessage = type === "단타" ? "짧은 외야 타구! 주자와 송구의 승부예요." : type === "2루타" ? "외야 깊은 타구! 2루까지 달려요." : "담장 쪽 깊은 타구! 3루에 도전해요.";
+  state.phase = "flight"; updateHud(); setMessage(type === "홈런" ? "완벽해요! 담장 너머로 날아가요!" : type === "땅볼" ? "땅볼! 수비수가 달려와요!" : hitMessage); tone(type === "홈런" ? 700 : 520, .12);
 }
 
 function chooseFlightTarget(type) {
   const zones = type === "땅볼" ? [[1, 430, 336, 405, 328], [2, 585, 336, 590, 326], [0, 220, 350, 205, 342]] : type === "단타"
-    ? [[2, 610, 306, 620, 320], [0, 190, 342, 185, 340]]
-    : type === "2루타" ? [[6, 735, 245, 710, 260], [5, 535, 230, 525, 248]]
-      : type === "3루타" ? [[4, 220, 238, 245, 260], [6, 760, 238, 715, 260]]
-        : [[5, 480, 155, 480, 236], [6, 760, 168, 690, 252]];
+    ? [[4, 300, 250, 300, 250], [5, 480, 235, 480, 235], [6, 660, 250, 660, 250]]
+    : type === "2루타" ? [[4, 180, 205, 205, 215], [6, 780, 205, 755, 215]]
+      : type === "3루타" ? [[4, 120, 175, 145, 185], [6, 840, 175, 815, 185]]
+        : [[5, 270, fieldLayout.fenceY - 58, 480, fieldLayout.fenceY], [6, 700, fieldLayout.fenceY - 52, 700, fieldLayout.fenceY]];
   const [fielderIndex, ballX, ballY, fieldX, fieldY] = zones[Math.floor(Math.random() * zones.length)];
   return { fielderIndex, ballX, ballY, fieldX, fieldY, label: type === "홈런" ? `${FIELDERS[fielderIndex].label} 뒤 담장` : FIELDERS[fielderIndex].label };
 }
+
+function hitDistance(type) { return type === "단타" || type === "땅볼" ? 1 : type === "2루타" ? 2 : type === "3루타" ? 3 : 4; }
+
+function flightDuration(type) { return type === "땅볼" ? 650 : type === "단타" ? 900 : type === "2루타" ? 1100 : type === "3루타" ? 1250 : 1450; }
 
 function buildRunningPlay(bases, distance) {
   const next = [false, false, false]; const moves = []; let runs = 0;
@@ -160,7 +167,7 @@ function buildRunningPlay(bases, distance) {
   }
   moves.push({ startNode: 0, endNode: distance, character: state.character });
   if (distance >= 4) runs += 1; else next[distance - 1] = true;
-  return { bases: next, runs, moves };
+  prepareMoves(moves); return { bases: next, runs, moves };
 }
 
 function buildGroundResult(bases, targetNode, leadOut, batterOut, character) {
@@ -174,19 +181,30 @@ function buildGroundResult(bases, targetNode, leadOut, batterOut, character) {
   for (let index = forcedCount; index < 3; index += 1) if (bases[index]) moves.push({ startNode: index + 1, endNode: index + 1, character: null, role: "runner", out: false });
   moves.push({ startNode: 0, endNode: 1, character, role: "batter", out: batterOut });
   if (!batterOut) next[0] = true;
-  return { bases: next, runs, moves };
+  prepareMoves(moves); return { bases: next, runs, moves };
 }
+
+function pathLength(startNode, endNode) {
+  let total = 0;
+  for (let node = startNode; node < endNode; node += 1) total += Math.hypot(BASE_PATH[node + 1].x - BASE_PATH[node].x, BASE_PATH[node + 1].y - BASE_PATH[node].y);
+  return total;
+}
+
+function prepareMoves(moves) {
+  for (const move of moves) move.duration = runningDuration(move.endNode - move.startNode, move.startNode, move.character);
+}
+
+function playDuration(moves) { return Math.max(0, ...moves.map((move) => move.duration)); }
 
 function buildGroundRace(now, target) {
   let forcedCount = 0;
   while (forcedCount < 3 && state.bases[forcedCount]) forcedCount += 1;
   const targetNode = forcedCount + 1, destination = BASE_PATH[targetNode];
-  const fieldingDelay = 360 - state.level * 28, throwFactor = Math.max(.2, .32 - state.level * .024);
-  const throwDuration = (from, to) => 340 + Math.hypot(to.x - from.x, to.y - from.y) * throwFactor;
-  const firstThrowStart = now + fieldingDelay, firstReceive = firstThrowStart + throwDuration({ x: target.fieldX, y: target.fieldY }, destination);
+  const fieldingDelay = 360 - state.level * 28;
+  const firstThrowStart = now + fieldingDelay, firstReceive = firstThrowStart + defensiveThrowDuration({ x: target.fieldX, y: target.fieldY }, destination);
   const runnerArrival = state.flight.start + runningDuration(1), leadOut = firstReceive < runnerArrival;
   const relay = targetNode > 1 && leadOut && state.outs + 1 < 3 && Math.random() < levels[state.level].doublePlayChance;
-  const secondThrowStart = firstReceive + 150, secondReceive = relay ? secondThrowStart + throwDuration(destination, BASE_PATH[1]) : null;
+  const secondThrowStart = firstReceive + 150, secondReceive = relay ? secondThrowStart + defensiveThrowDuration(destination, BASE_PATH[1]) : null;
   const batterOut = targetNode === 1 ? leadOut : relay && secondReceive < runnerArrival;
   const result = buildGroundResult(state.bases, targetNode, leadOut, batterOut, state.character);
   const firstLabel = BASE_PATH[targetNode].label, stages = [{ at: firstReceive, out: leadOut, text: leadOut ? `${firstLabel} 포스 아웃!` : `${firstLabel} 세이프!`, fired: false }];
@@ -195,27 +213,53 @@ function buildGroundRace(now, target) {
   return { result, action: { kind: "groundRace", start: now, target, targetNode, firstThrowStart, firstReceive, secondThrowStart, secondReceive, relay, stages }, runnerArrival };
 }
 
-function runningDuration(distance) {
-  return (2400 + Math.max(0, distance - 1) * 1300) * characters[state.character].runnerSpeed;
+function defensiveThrowDuration(from, to) {
+  const throwFactor = Math.max(.2, .32 - state.level * .024);
+  return 340 + Math.hypot(to.x - from.x, to.y - from.y) * throwFactor;
+}
+
+function buildHitRace(now, type, target) {
+  const distance = hitDistance(type), destination = BASE_PATH[distance], result = buildRunningPlay(state.bases, distance);
+  const recoveryBase = { "단타": 1050, "2루타": 2250, "3루타": 3400 }[type];
+  const recoveryStep = { "단타": 90, "2루타": 140, "3루타": 170 }[type];
+  const recovery = Math.max(420, recoveryBase - state.level * recoveryStep + (Math.random() - .5) * 360);
+  const throwStart = now + recovery, receive = throwStart + defensiveThrowDuration({ x: target.fieldX, y: target.fieldY }, destination);
+  const batterMove = result.moves[result.moves.length - 1], runnerArrival = state.flight.start + batterMove.duration, out = receive < runnerArrival;
+  if (out) { batterMove.out = true; batterMove.outAt = receive; result.bases[distance - 1] = false; if (distance === 1 && state.outs === 2) result.runs = 0; }
+  const outText = distance === 1 ? "공이 먼저! 1루 아웃!" : `공이 먼저! ${destination.label} 태그 아웃!`;
+  const safeText = `주자가 먼저! ${destination.label} 세이프!`;
+  return {
+    result, runnerArrival,
+    action: { kind: "hitRace", start: now, target, targetNode: distance, throwStart, receive, stages: [{ at: receive, out, text: out ? outText : safeText, fired: false }] }
+  };
+}
+
+function runningDuration(distance, startNode = 0, character = state.character) {
+  if (distance <= 0) return 0;
+  const speedFactor = character === null ? 1 : characters[character].runnerSpeed;
+  return pathLength(startNode, Math.min(4, startNode + distance)) / .25 * speedFactor;
 }
 
 function finishFlight() {
   if (state.phase !== "flight") return;
   const now = performance.now(); const { type, target, caught } = state.flight; state.phase = "resulting";
   if (type === "땅볼") {
-    const race = buildGroundRace(now, target), duration = runningDuration(1), finalAt = Math.max(race.runnerArrival, race.action.secondReceive || race.action.firstReceive);
+    const race = buildGroundRace(now, target), duration = playDuration(race.result.moves), finalAt = Math.max(race.runnerArrival, race.action.secondReceive || race.action.firstReceive);
     state.runningPlay = { start: state.flight.start, duration, moves: race.result.moves, resultBases: race.result.bases, runs: race.result.runs, type: "땅볼", resultMessage: race.action.relay ? "병살 플레이가 끝났어요." : "땅볼 승부가 끝났어요.", committed: false };
     state.fieldAction = race.action; setMessage(`${BASE_PATH[race.action.targetNode].label}에서 승부해요!`); tone(120, .16); continuePlay(finalAt - now + 850); return;
   }
   if (caught) {
-    state.fieldAction = { kind: "catch", start: now, target }; state.outs += 1; setMessage(`${target.label}가 잡았어요! 플라이 아웃!`); showEffect("플라이 아웃!", "out"); playSound("out"); updateHud(); continuePlay(1450); return;
+    state.runningPlay = null; state.fieldAction = { kind: "catch", start: now, target }; state.outs += 1; setMessage(`${target.label}가 잡았어요! 플라이 아웃!`); showEffect("플라이 아웃!", "out"); playSound("out"); updateHud(); continuePlay(1450); return;
   }
-  const distance = type === "단타" ? 1 : type === "2루타" ? 2 : type === "3루타" ? 3 : 4;
-  const result = buildRunningPlay(state.bases, distance); const duration = runningDuration(distance);
-  state.runningPlay = { start: state.flight.start, duration, moves: result.moves, resultBases: result.bases, runs: result.runs, type, committed: false };
-  state.fieldAction = type === "홈런" ? null : { kind: "throw", start: now, target };
-  setMessage(type === "홈런" ? "홈런! 주자들이 홈까지 달려요!" : `${type}! 타자가 ${BASE_PATH[distance].label}까지 달려요!`);
-  tone(620, .12); continuePlay(duration + 450);
+  const distance = hitDistance(type);
+  if (type === "홈런") {
+    const result = buildRunningPlay(state.bases, distance), duration = playDuration(result.moves);
+    state.runningPlay = { start: state.flight.start, duration, moves: result.moves, resultBases: result.bases, runs: result.runs, type, committed: false };
+    state.fieldAction = null; setMessage("홈런! 공이 외야 담장을 넘어갔어요!"); tone(620, .12); continuePlay(Math.max(0, state.flight.start + duration - now) + 450); return;
+  }
+  const race = buildHitRace(now, type, target), finalAt = Math.max(race.runnerArrival, race.action.receive);
+  state.runningPlay = { start: state.flight.start, duration: playDuration(race.result.moves), moves: race.result.moves, resultBases: race.result.bases, runs: race.result.runs, type, resultMessage: race.action.stages[0].text, committed: false };
+  state.fieldAction = race.action; setMessage(`${target.label}가 잡아 ${BASE_PATH[distance].label}로 송구해요!`); tone(620, .12); continuePlay(finalAt - now + 850);
 }
 
 function commitRunningPlay() {
@@ -287,7 +331,7 @@ function showEffect(text, kind) {
 
 function updatePlayEvents(now) {
   const action = state.fieldAction;
-  if (action?.kind !== "groundRace") return;
+  if (!action || (action.kind !== "groundRace" && action.kind !== "hitRace")) return;
   for (const stage of action.stages) {
     if (stage.fired || now < stage.at) continue;
     stage.fired = true;
@@ -300,7 +344,7 @@ function draw() {
   const now = state.paused && state.pauseStarted ? state.pauseStarted : performance.now(); const level = levels[state.level] || levels[0];
   if (!state.paused) updatePlayEvents(now);
   ctx.clearRect(0, 0, canvas.width, canvas.height); drawBackground(level); drawBases(); drawFielders(now); drawPitcher(now); drawBaseRunners(now);
-  const flightProgress = state.phase === "flight" && state.flight ? Math.min(1, (now - state.flight.start) / 900) : null;
+  const flightProgress = state.phase === "flight" && state.flight ? Math.min(1, (now - state.flight.start) / state.flight.duration) : null;
   if (flightProgress !== null) { drawTrajectory(); drawFieldingAction(flightProgress); }
   else if (state.phase === "resulting" && state.fieldAction) drawFieldingResult(now);
   drawCatcher(); drawBatter(now);
@@ -371,9 +415,9 @@ function activeFielderIndices() {
   if (state.phase === "flight" && state.flight?.type !== "홈런") active.add(state.flight.target.fielderIndex);
   if (state.phase === "resulting" && state.fieldAction) {
     active.add(state.fieldAction.target.fielderIndex);
-    if (state.fieldAction.kind === "groundRace") {
+    if (state.fieldAction.kind === "groundRace" || state.fieldAction.kind === "hitRace") {
       const receiver = { 1: 3, 2: 2, 3: 0 }[state.fieldAction.targetNode]; if (receiver !== undefined) active.add(receiver);
-      if (state.fieldAction.relay) active.add(3);
+      if (state.fieldAction.kind === "groundRace" && state.fieldAction.relay) active.add(3);
     }
   }
   return active;
@@ -394,20 +438,34 @@ function drawBaseRunners(now) {
       drawGroundShadow(base.x, base.y - 5, height * .32, .16); drawStandalone("runnerStand", base.x, base.y - 5, height * .86, height, index === 2);
     }); return;
   }
-  const progress = Math.min(1, (now - state.runningPlay.start) / state.runningPlay.duration);
   for (const move of state.runningPlay.moves) {
     if (move.outAt && now > move.outAt + 220) continue;
-    const point = runningPoint(move, progress), name = move.character === 2 ? "tori" : "runner", frame = Math.floor((now - state.runningPlay.start) / 95) % 5;
+    const moveProgress = move.duration ? Math.min(1, (now - state.runningPlay.start) / move.duration) : 1;
+    const point = runningPoint(move, moveProgress), name = move.character === 2 ? "tori" : "runner", frame = runnerFrame(name, moveProgress, now - state.runningPlay.start, move.endNode > move.startNode);
     drawGroundShadow(point.x, point.y, 27, .18); drawFrame(name, frame, point.x, point.y, 70, 78, point.flip);
   }
+}
+
+function runnerFrame(name, progress, elapsed, moving) {
+  if (!moving) return 0;
+  if (progress >= .94) return 3;
+  if (progress >= .86) return 2;
+  return name === "tori" ? 2 : Math.floor(elapsed / 130) % 2;
 }
 
 function runningPoint(move, progress) {
   const span = move.endNode - move.startNode;
   if (span <= 0) { const point = BASE_PATH[move.startNode]; return { x: point.x, y: point.y, flip: false }; }
-  const travelled = Math.min(span - .0001, progress * span); const segment = Math.floor(travelled); const local = travelled - segment;
-  const from = BASE_PATH[move.startNode + segment], to = BASE_PATH[move.startNode + segment + 1], eased = local * local * (3 - 2 * local);
-  return { x: from.x + (to.x - from.x) * eased, y: from.y + (to.y - from.y) * eased, flip: to.x < from.x };
+  const total = pathLength(move.startNode, move.endNode), travelled = Math.min(total - .001, progress * total); let covered = 0;
+  for (let node = move.startNode; node < move.endNode; node += 1) {
+    const from = BASE_PATH[node], to = BASE_PATH[node + 1], segment = Math.hypot(to.x - from.x, to.y - from.y);
+    if (covered + segment > travelled || node + 1 === move.endNode) {
+      const local = Math.max(0, Math.min(1, (travelled - covered) / segment));
+      return { x: from.x + (to.x - from.x) * local, y: from.y + (to.y - from.y) * local, flip: to.x < from.x };
+    }
+    covered += segment;
+  }
+  return { x: BASE_PATH[move.endNode].x, y: BASE_PATH[move.endNode].y, flip: false };
 }
 
 function drawBall(x, y, radius) {
@@ -423,7 +481,8 @@ function drawGroundShadow(x, y, radius, opacity) {
 }
 
 function flightPoint(progress) {
-  const start = CONTACT, target = state.flight.target, grounder = state.flight.type === "땅볼", control = { x: (start.x + target.ballX) / 2, y: grounder ? Math.max(target.ballY, start.y - 28) : Math.min(start.y, target.ballY) - (state.flight.type === "홈런" ? 210 : 115) }, inverse = 1 - progress;
+  const start = CONTACT, target = state.flight.target, grounder = state.flight.type === "땅볼", homer = state.flight.type === "홈런";
+  const control = { x: (start.x + target.ballX) / 2, y: grounder ? Math.max(target.ballY, start.y - 28) : homer ? Math.max(18, target.ballY - 92) : Math.min(start.y, target.ballY) - 115 }, inverse = 1 - progress;
   return { x: inverse * inverse * start.x + 2 * inverse * progress * control.x + progress * progress * target.ballX, y: inverse * inverse * start.y + 2 * inverse * progress * control.y + progress * progress * target.ballY };
 }
 
@@ -437,12 +496,13 @@ function drawFoulTrajectory() {
 }
 
 function drawTrajectory() {
-  const start = CONTACT, target = state.flight.target, grounder = state.flight.type === "땅볼", control = { x: (start.x + target.ballX) / 2, y: grounder ? Math.max(target.ballY, start.y - 28) : Math.min(start.y, target.ballY) - (state.flight.type === "홈런" ? 210 : 115) };
+  const start = CONTACT, target = state.flight.target, grounder = state.flight.type === "땅볼", homer = state.flight.type === "홈런";
+  const control = { x: (start.x + target.ballX) / 2, y: grounder ? Math.max(target.ballY, start.y - 28) : homer ? Math.max(18, target.ballY - 92) : Math.min(start.y, target.ballY) - 115 };
   drawDashedPath(start, control, target, "rgba(255,247,136,.7)");
-  if (state.flight.type !== "홈런") {
+  if (!homer) {
     ctx.save(); ctx.fillStyle = "rgba(255,201,74,.3)"; ctx.strokeStyle = "rgba(242,106,61,.75)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(target.fieldX, target.fieldY, 24, 9, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
     drawTag(target.label, target.fieldX, target.fieldY - 18, "#10233f");
-  }
+  } else drawTag("담장 밖!", target.ballX, target.ballY + 32, "#d34d2a");
 }
 
 function drawDashedPath(start, control, end, color) {
@@ -476,15 +536,17 @@ function drawFieldingResult(now) {
     }
     return;
   }
+  if (action.kind === "hitRace") {
+    const base = BASE_PATH[action.targetNode], glove = { x: base.x, y: base.y - 42 };
+    drawGroundShadow(at.x, at.y, 25, .18); drawFrame("pitcher", now < action.throwStart ? 0 : 4, at.x, at.y, 66, 82, target.fieldX < fielder.x);
+    if (now < action.throwStart) { drawTag(`${target.label} 포구!`, at.x, at.y + 18, "#10233f"); return; }
+    drawReceiver(action.targetNode);
+    if (now < action.receive) drawThrowBall({ x: at.x, y: at.y - 52 }, glove, (now - action.throwStart) / (action.receive - action.throwStart));
+    return;
+  }
   if (action.kind === "catch") {
     drawGroundShadow(at.x, at.y, 25, .18); drawFrame("pitcher", elapsed < 520 ? 0 : 4, at.x, at.y, 66, 82, target.fieldX < fielder.x); drawTag(elapsed < 520 ? "포구!" : "내야로 송구!", at.x, at.y + 18, "#10233f");
     if (elapsed > 520 && elapsed < 1050) drawThrowBall({ x: at.x, y: at.y - 52 }, { x: 480, y: 322 }, (elapsed - 520) / 530); return;
-  }
-  drawGroundShadow(at.x, at.y, 25, .18); drawFrame("pitcher", elapsed < 370 ? 0 : 4, at.x, at.y, 66, 82, target.fieldX < fielder.x); drawTag(elapsed < 370 ? `${target.label} 포구` : "1루로 송구!", at.x, at.y + 18, "#10233f");
-  if (elapsed > 370) {
-    const progress = Math.min(1, (elapsed - 370) / 650), first = FIELDERS[3];
-    drawThrowBall({ x: at.x, y: at.y - 52 }, { x: first.x - 9, y: first.y - 50 }, progress);
-    if (progress >= .8) drawTag("1루수 포구", first.x, first.y + 18, "#10233f");
   }
 }
 
@@ -517,6 +579,8 @@ function runSelfCheck() {
   result = buildGroundResult([true, false, false], 2, true, true, 0); console.assert(result.bases.every((base) => !base) && result.moves.filter((move) => move.out).length === 2, "2루 포스아웃 뒤 1루 송구가 빠르면 병살이어야 합니다.");
   result = buildGroundResult([true, true, false], 3, true, false, 0); console.assert(result.bases[0] && result.bases[1] && !result.bases[2], "3루 포스아웃 뒤 타자와 1루 주자는 살아야 합니다.");
   result = buildGroundResult([true, true, true], 4, false, false, 0); console.assert(result.runs === 1 && result.bases.every(Boolean), "만루에서 홈 세이프면 1점과 만루가 유지되어야 합니다.");
+  console.assert([0, 1].includes(runnerFrame("runner", .5, 520, true)) && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
+  const homeRunTarget = chooseFlightTarget("홈런"); console.assert(homeRunTarget.ballY < fieldLayout.fenceY, "홈런 종점은 외야 펜스 너머여야 합니다.");
   console.assert(levels.length === 6, "여섯 레벨이 있어야 합니다.");
 }
 
