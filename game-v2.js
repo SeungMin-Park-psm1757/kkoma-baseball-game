@@ -58,6 +58,10 @@ const BGM_TRACKS = [
   "assets/music/level-1-sunny.mp3", "assets/music/level-2-sunny.mp3", "assets/music/level-3-sunset.mp3",
   "assets/music/level-4-sunset.mp3", "assets/music/level-5-balloon.mp3", "assets/music/level-6-devils.mp3"
 ];
+const SFX_TRACKS = {
+  bat: "assets/sfx/bat-hit.mp3", glove: "assets/sfx/glove-catch.mp3", throw: "assets/sfx/throw.mp3",
+  safe: "assets/sfx/safe-slide.mp3", out: "assets/sfx/out.mp3", homerun: "assets/sfx/home-run.mp3"
+};
 const backgroundMusic = new Audio();
 backgroundMusic.loop = true; backgroundMusic.volume = .24;
 let backgroundLevel = null;
@@ -129,7 +133,7 @@ function swing() {
 function resolveStrike(reason) {
   if (state.action) state.action.outcome = "miss";
   state.phase = "resulting"; state.strikes += 1; const strikeOut = state.strikes >= 3;
-  if (strikeOut) { state.outs += 1; state.strikes = 0; showEffect("삼진 아웃!", "strikeout"); playSound("strikeout"); }
+  if (strikeOut) { state.outs += 1; state.strikes = 0; showEffect("삼진 아웃!", "strikeout"); playSound("strikeout"); playEffectSound("out"); }
   else playSound("strike");
   setMessage(strikeOut ? `${reason}! 삼진 아웃이에요.` : `${reason}! 스트라이크 ${state.strikes}/3.`); updateHud(); continuePlay(strikeOut ? 1250 : 750);
 }
@@ -139,14 +143,14 @@ function resolveFoul() {
   state.phase = "foul"; state.foul = { start: performance.now(), side: Math.random() < .5 ? -1 : 1 };
   const counted = state.strikes < 2; if (counted) state.strikes += 1;
   setMessage(counted ? `파울! 스트라이크 ${state.strikes}/3, 다시 준비해요.` : "파울! 두 스트라이크에서는 카운트가 늘지 않아요.");
-  tone(150, .12); updateHud(); continuePlay(850);
+  playEffectSound("bat"); tone(150, .12); updateHud(); continuePlay(850);
 }
 
 function resolveHit(delta) {
   let type = "단타"; if (delta < .025) type = "홈런"; else if (delta < .055) type = "3루타"; else if (delta < .09) type = "2루타";
   if (type === "단타" && Math.random() < levels[state.level].groundOutChance) type = "땅볼";
   const start = performance.now(), distance = hitDistance(type), preview = buildRunningPlay(state.bases, distance);
-  state.strikes = 0; state.flight = { start, duration: flightDuration(type), type, caught: type !== "땅볼" && Math.random() < levels[state.level].catchChance && type !== "홈런", target: chooseFlightTarget(type) };
+  state.strikes = 0; playEffectSound("bat"); state.flight = { start, duration: flightDuration(type), type, caught: type !== "땅볼" && Math.random() < levels[state.level].catchChance && type !== "홈런", target: chooseFlightTarget(type) };
   state.runningPlay = { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
   if (state.action) state.action.outcome = type;
   const hitMessage = type === "단타" ? "짧은 외야 타구! 주자와 송구의 승부예요." : type === "2루타" ? "외야 깊은 타구! 2루까지 달려요." : "담장 쪽 깊은 타구! 3루에 도전해요.";
@@ -221,7 +225,7 @@ function buildGroundRace(now, target) {
   const firstLabel = BASE_PATH[targetNode].label, stages = [{ at: firstReceive, out: leadOut, text: leadOut ? `${firstLabel} 포스 아웃!` : `${firstLabel} 세이프!`, fired: false }];
   if (relay) stages.push({ at: secondReceive, out: batterOut, text: batterOut ? "1루도 아웃!" : "1루 세이프!", fired: false });
   result.moves.forEach((move) => { if (move.out) move.outAt = move.role === "batter" && relay ? secondReceive : firstReceive; });
-  return { result, action: { kind: "groundRace", start: now, target, targetNode, firstThrowStart, firstReceive, secondThrowStart, secondReceive, relay, stages }, runnerArrival };
+  return { result, action: { kind: "groundRace", start: now, target, targetNode, firstThrowStart, firstReceive, secondThrowStart, secondReceive, relay, firstThrowPlayed: false, secondThrowPlayed: false, stages }, runnerArrival };
 }
 
 function defensiveThrowDuration(from, to) {
@@ -238,7 +242,7 @@ function buildHitRace(now, type, target) {
     const destination = BASE_PATH[node], receive = throwStart + defensiveThrowDuration(from, destination);
     const runnerArrival = state.flight.start + runningDuration(node), out = receive < runnerArrival;
     const text = out ? (node === 1 ? "공이 먼저! 1루 아웃!" : `공이 먼저! ${destination.label} 태그 아웃!`) : `주자가 먼저! ${destination.label} 세이프!`;
-    legs.push({ node, from, throwStart, receive }); stages.push({ at: receive, out, text, fired: false });
+    legs.push({ node, from, throwStart, receive, throwPlayed: false }); stages.push({ at: receive, out, text, fired: false });
     if (out) { outAt = receive; break; }
     from = { x: destination.x, y: destination.y - 42 }; throwStart = receive + 160;
   }
@@ -260,21 +264,21 @@ function finishFlight() {
   if (type === "땅볼") {
     const race = buildGroundRace(now, target), duration = playDuration(race.result.moves), finalAt = Math.max(race.runnerArrival, race.action.secondReceive || race.action.firstReceive);
     state.runningPlay = { start: state.flight.start, duration, moves: race.result.moves, resultBases: race.result.bases, runs: race.result.runs, type: "땅볼", resultMessage: race.action.relay ? "병살 플레이가 끝났어요." : "땅볼 승부가 끝났어요.", committed: false };
-    state.fieldAction = race.action; setMessage(`${BASE_PATH[race.action.targetNode].label}에서 승부해요!`); tone(120, .16); continuePlay(finalAt - now + 850); return;
+    state.fieldAction = race.action; playEffectSound("glove"); setMessage(`${BASE_PATH[race.action.targetNode].label}에서 승부해요!`); tone(120, .16); continuePlay(finalAt - now + 850); return;
   }
   if (caught) {
-    state.runningPlay = null; state.fieldAction = { kind: "catch", start: now, target }; state.outs += 1; setMessage(`${target.label}가 잡았어요! 플라이 아웃!`); showEffect("플라이 아웃!", "out"); playSound("out"); updateHud(); continuePlay(1450); return;
+    state.runningPlay = null; state.fieldAction = { kind: "catch", start: now, target }; state.outs += 1; setMessage(`${target.label}가 잡았어요! 플라이 아웃!`); showEffect("플라이 아웃!", "out"); playEffectSound("glove"); setTimeout(() => playEffectSound("out"), 120); updateHud(); continuePlay(1450); return;
   }
   const distance = hitDistance(type);
   if (type === "홈런") {
     const result = buildRunningPlay(state.bases, distance), duration = playDuration(result.moves);
     state.runningPlay = { start: state.flight.start, duration, moves: result.moves, resultBases: result.bases, runs: result.runs, type, committed: false };
-    state.fieldAction = null; state.celebration = { start: now }; setMessage("홈런! 공이 외야 담장을 넘어갔어요!"); showEffect("홈런!", "homerun"); playSound("homerun"); continuePlay(Math.max(0, state.flight.start + duration - now) + 450); return;
+    state.fieldAction = null; state.celebration = { start: now }; setMessage("홈런! 공이 외야 담장을 넘어갔어요!"); showEffect("홈런!", "homerun"); playEffectSound("homerun"); continuePlay(Math.max(0, state.flight.start + duration - now) + 450); return;
   }
   const race = buildHitRace(now, type, target), finalAt = race.finalAt;
   state.runningPlay = { start: state.flight.start, duration: playDuration(race.result.moves), moves: race.result.moves, resultBases: race.result.bases, runs: race.result.runs, type, resultMessage: race.action.stages[0].text, committed: false };
   state.runningPlay.resultMessage = race.action.stages[race.action.stages.length - 1].text;
-  state.fieldAction = race.action; setMessage(`${target.label}가 잡아 먼저 1루로 송구해요!`); tone(620, .12); continuePlay(finalAt - now + 850);
+  state.fieldAction = race.action; playEffectSound("glove"); setMessage(`${target.label}가 잡아 먼저 1루로 송구해요!`); tone(620, .12); continuePlay(finalAt - now + 850);
 }
 
 function commitRunningPlay() {
@@ -349,6 +353,12 @@ function playSound(kind) {
   for (const [frequency, seconds, delay] of patterns[kind] || []) setTimeout(() => tone(frequency, seconds), delay);
 }
 
+function playEffectSound(kind) {
+  if (state.muted || !SFX_TRACKS[kind]) return;
+  const audio = new Audio(SFX_TRACKS[kind]); audio.volume = kind === "homerun" ? .55 : .46;
+  audio.play().catch(() => { /* sound is optional */ });
+}
+
 function showEffect(text, kind) {
   const effect = $("playEffect"), wrap = $("gameWrap"), board = $("scoreboard"), token = ++state.effectToken;
   effect.className = "play-effect"; wrap.classList.remove("fx-out", "fx-runner"); board.classList.remove("fx-update"); void effect.offsetWidth;
@@ -359,11 +369,16 @@ function showEffect(text, kind) {
 function updatePlayEvents(now) {
   const action = state.fieldAction;
   if (!action || (action.kind !== "groundRace" && action.kind !== "hitRace")) return;
+  if (action.kind === "groundRace") {
+    if (!action.firstThrowPlayed && now >= action.firstThrowStart) { action.firstThrowPlayed = true; playEffectSound("throw"); }
+    if (action.relay && !action.secondThrowPlayed && now >= action.secondThrowStart) { action.secondThrowPlayed = true; playEffectSound("throw"); }
+  } else for (const leg of action.legs) if (!leg.throwPlayed && now >= leg.throwStart) { leg.throwPlayed = true; playEffectSound("throw"); }
   for (const stage of action.stages) {
     if (stage.fired || now < stage.at) continue;
     stage.fired = true;
     if (stage.out) state.outs = Math.min(3, state.outs + 1);
-    setMessage(stage.text); updateHud(); showEffect(stage.text, stage.out ? "out" : "safe"); playSound(stage.out ? "out" : "safe");
+    setMessage(stage.text); updateHud(); showEffect(stage.text, stage.out ? "out" : "safe");
+    if (stage.out) playEffectSound("out"); else if (stage === action.stages[action.stages.length - 1]) playEffectSound("safe");
   }
 }
 
@@ -645,6 +660,7 @@ function runSelfCheck() {
   console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 바로 1루로 송구해야 합니다.");
   console.assert(flightDuration("3루타") === 1034 && flightDuration("홈런") === 1265, "타격 뒤 공은 기존보다 10% 느리게 날아가야 합니다.");
   console.assert(BGM_TRACKS.length === levels.length && BGM_TRACKS.every((track) => track.endsWith(".mp3")), "각 레벨에는 한 개의 배경음이 배정되어야 합니다.");
+  console.assert(Object.keys(SFX_TRACKS).length === 6 && Object.values(SFX_TRACKS).every((track) => track.endsWith(".mp3")), "여섯 가지 플레이 효과음이 있어야 합니다.");
   const homeRunTarget = chooseFlightTarget("홈런"); console.assert(homeRunTarget.ballY < fieldLayout.fenceY, "홈런 종점은 외야 펜스 너머여야 합니다.");
   console.assert(levels.length === 6, "여섯 레벨이 있어야 합니다.");
 }
