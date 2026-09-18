@@ -1,11 +1,12 @@
 const levels = [
-  { name: "동네 야구장", target: 3, pitchMs: 1900, window: .24, catchChance: .03, groundOutChance: .06, doublePlayChance: .25, foulChance: .08, type: "직선 공", background: "easy", color: "#7ec8ed" },
-  { name: "바람 부는 경기장", target: 4, pitchMs: 1700, window: .21, catchChance: .05, groundOutChance: .09, doublePlayChance: .3, foulChance: .11, type: "높은 공", background: "easy", color: "#a9d6f2" },
-  { name: "해 질 녘 경기장", target: 5, pitchMs: 1500, window: .18, catchChance: .08, groundOutChance: .12, doublePlayChance: .36, foulChance: .14, type: "빠른 공", background: "medium", color: "#f4b67c" },
-  { name: "구불구불 경기장", target: 6, pitchMs: 1350, window: .16, catchChance: .11, groundOutChance: .16, doublePlayChance: .42, foulChance: .17, type: "휘는 공", background: "medium", color: "#cdb5ef" },
-  { name: "풍선 경기장", target: 8, pitchMs: 1200, window: .14, catchChance: .15, groundOutChance: .2, doublePlayChance: .48, foulChance: .2, type: "장애물 등장", background: "hard", color: "#8bd7a1" },
-  { name: "챔피언 경기장", target: 10, pitchMs: 1080, window: .12, catchChance: .19, groundOutChance: .24, doublePlayChance: .55, foulChance: .23, type: "빠른 공 + 장애물", background: "hard", color: "#f28b7a" }
+  { name: "동네 야구장", target: 3, pitchMs: 2000, window: .28, outChance: .1, doublePlayChance: 0, foulChance: .06, type: "직선 공", background: "easy", color: "#7ec8ed" },
+  { name: "바람 부는 경기장", target: 4, pitchMs: 1850, window: .25, outChance: .2, doublePlayChance: .08, foulChance: .08, type: "높은 공", background: "easy", color: "#a9d6f2" },
+  { name: "해 질 녘 경기장", target: 5, pitchMs: 1700, window: .22, outChance: .3, doublePlayChance: .15, foulChance: .1, type: "빠른 공", background: "medium", color: "#f4b67c" },
+  { name: "구불구불 경기장", target: 6, pitchMs: 1550, window: .2, outChance: .4, doublePlayChance: .22, foulChance: .12, type: "휘는 공", background: "medium", color: "#cdb5ef" },
+  { name: "풍선 경기장", target: 8, pitchMs: 1400, window: .18, outChance: .5, doublePlayChance: .3, foulChance: .14, type: "장애물 등장", background: "hard", color: "#8bd7a1" },
+  { name: "챔피언 경기장", target: 10, pitchMs: 1250, window: .16, outChance: .6, doublePlayChance: .38, foulChance: .16, type: "빠른 공 + 장애물", background: "hard", color: "#f28b7a" }
 ];
+const BALL_FLIGHT_SLOWDOWN = 1.2, RUNNER_SPEED_MULTIPLIER = 1.05;
 
 const characters = [
   { name: "정우", asset: "assets/02-character-minjun-power.png", motion: "minjun", role: "힘껏 치는 친구", detail: "홈런 타이밍이 조금 더 넓어요.", bonus: .025, runnerSpeed: 1, tag: "파워형" },
@@ -149,9 +150,10 @@ function resolveFoul() {
 
 function resolveHit(delta) {
   let type = "단타"; if (delta < .025) type = "홈런"; else if (delta < .055) type = "3루타"; else if (delta < .09) type = "2루타";
-  if (type === "단타" && Math.random() < levels[state.level].groundOutChance) type = "땅볼";
+  const defensiveOut = type !== "홈런" && Math.random() < levels[state.level].outChance;
+  if (defensiveOut && Math.random() < .55) type = "땅볼";
   const start = performance.now(), distance = hitDistance(type), preview = buildRunningPlay(state.bases, distance);
-  state.strikes = 0; playEffectSound("bat"); state.flight = { start, duration: flightDuration(type), type, caught: type !== "땅볼" && Math.random() < levels[state.level].catchChance && type !== "홈런", target: chooseFlightTarget(type) };
+  state.strikes = 0; playEffectSound("bat"); state.flight = { start, duration: flightDuration(type), type, caught: defensiveOut && type !== "땅볼", target: chooseFlightTarget(type) };
   state.runningPlay = { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
   if (state.action) state.action.outcome = type;
   const hitMessage = type === "단타" ? "짧은 외야 타구! 주자와 송구의 승부예요." : type === "2루타" ? "외야 깊은 타구! 2루까지 달려요." : "담장 쪽 깊은 타구! 3루에 도전해요.";
@@ -172,7 +174,7 @@ function hitDistance(type) { return type === "단타" || type === "땅볼" ? 1 :
 
 function hitRelayNodes(type) { return Array.from({ length: hitDistance(type) }, (_, index) => index + 1); }
 
-function flightDuration(type) { return Math.round((type === "땅볼" ? 520 : type === "단타" ? 680 : type === "2루타" ? 820 : type === "3루타" ? 940 : 1150) * 1.1); }
+function flightDuration(type) { return Math.round((type === "땅볼" ? 520 : type === "단타" ? 680 : type === "2루타" ? 820 : type === "3루타" ? 940 : 1150) * 1.1 * BALL_FLIGHT_SLOWDOWN); }
 
 function buildRunningPlay(bases, distance) {
   const next = [false, false, false]; const moves = []; let runs = 0;
@@ -256,7 +258,7 @@ function buildHitRace(now, type, target) {
 function runningDuration(distance, startNode = 0, character = state.character) {
   if (distance <= 0) return 0;
   const speedFactor = character === null ? 1 : characters[character].runnerSpeed;
-  return pathLength(startNode, Math.min(4, startNode + distance)) / .25 * speedFactor;
+  return pathLength(startNode, Math.min(4, startNode + distance)) / .25 * speedFactor / RUNNER_SPEED_MULTIPLIER;
 }
 
 function finishFlight() {
@@ -668,7 +670,9 @@ function runSelfCheck() {
   console.assert(runnerFrame("runner", .5, 520, true) === 1 && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 배트 없는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
   console.assert(hitRelayNodes("3루타").join(",") === "1,2,3", "장타 송구는 1루부터 목표 베이스까지 차례로 중계되어야 합니다.");
   console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 바로 1루로 송구해야 합니다.");
-  console.assert(flightDuration("3루타") === 1034 && flightDuration("홈런") === 1265, "타격 뒤 공은 기존보다 10% 느리게 날아가야 합니다.");
+  console.assert(flightDuration("3루타") === 1241 && flightDuration("홈런") === 1518, "타격 뒤 공은 현재보다 1.2배 느리게 날아가야 합니다.");
+  console.assert(BALL_FLIGHT_SLOWDOWN === 1.2 && RUNNER_SPEED_MULTIPLIER === 1.05, "공과 주자 속도 보정값이 맞아야 합니다.");
+  console.assert(levels.map((level) => level.outChance * 10).join(",") === "1,2,3,4,5,6", "수비 아웃 목표는 레벨마다 열 번 중 1~6번이어야 합니다.");
   console.assert(BGM_TRACKS.length === levels.length && BGM_TRACKS.every((track) => track.endsWith(".mp3")), "각 레벨에는 한 개의 배경음이 배정되어야 합니다.");
   console.assert(Object.keys(SFX_TRACKS).length === 6 && Object.values(SFX_TRACKS).every((track) => track.endsWith(".mp3")), "여섯 가지 플레이 효과음이 있어야 합니다.");
   console.assert(MINJUN_GLASSES.length === 5, "정우의 다섯 동작 프레임에 안경 위치가 있어야 합니다.");
