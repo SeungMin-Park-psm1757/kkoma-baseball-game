@@ -54,6 +54,13 @@ const state = {
   homeRuns: 0, phase: "idle", pitch: null, flight: null, paused: false, pauseStarted: null, resumeAction: null,
   message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, fieldAction: null, foul: null, runningPlay: null, celebration: null, effectToken: 0
 };
+const BGM_TRACKS = [
+  "assets/music/level-1-sunny.mp3", "assets/music/level-2-sunny.mp3", "assets/music/level-3-sunset.mp3",
+  "assets/music/level-4-sunset.mp3", "assets/music/level-5-balloon.mp3", "assets/music/level-6-devils.mp3"
+];
+const backgroundMusic = new Audio();
+backgroundMusic.loop = true; backgroundMusic.volume = .24;
+let backgroundLevel = null;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("gameCanvas");
@@ -69,6 +76,7 @@ function saveProgress() {
 
 function showScreen(name) {
   state.screen = name;
+  if (name !== "game") stopBackgroundMusic();
   document.querySelectorAll(".screen").forEach((screen) => screen.classList.toggle("active", screen.id === `${name}Screen`));
   if (name === "character") renderCharacters();
   if (name === "level") renderLevels();
@@ -97,7 +105,7 @@ function startGame(levelIndex) {
   Object.assign(state, { level: levelIndex, score: 0, outs: 0, strikes: 0, bases: [false, false, false], homeRuns: 0, phase: "between", pitch: null, flight: null, action: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, paused: false });
   configureField(levels[levelIndex].background);
   state.token += 1; $("gameEyebrow").textContent = `LEVEL ${levelIndex + 1}`; $("gameTitle").textContent = levels[levelIndex].name;
-  showScreen("game"); updateHud(); setMessage("공을 보고, 준비되면 눌러요!");
+  showScreen("game"); playBackgroundMusic(levelIndex); updateHud(); setMessage("공을 보고, 준비되면 눌러요!");
   const token = state.token; setTimeout(() => { if (state.screen === "game" && token === state.token) nextPitch(); }, 850);
 }
 
@@ -304,13 +312,24 @@ function updateHud() {
 
 function setMessage(message) { state.message = message; $("gameMessage").textContent = message; }
 
+function playBackgroundMusic(levelIndex) {
+  if (state.muted) return;
+  if (backgroundLevel !== levelIndex) {
+    backgroundMusic.pause(); backgroundMusic.src = BGM_TRACKS[levelIndex]; backgroundMusic.currentTime = 0; backgroundLevel = levelIndex;
+  }
+  backgroundMusic.play().catch(() => { /* autoplay can be blocked until a level card is clicked */ });
+}
+
+function stopBackgroundMusic() { backgroundMusic.pause(); backgroundMusic.currentTime = 0; backgroundLevel = null; }
+
 function togglePause(paused) {
   if (paused === state.paused) return;
-  if (paused) { state.paused = true; state.pauseStarted = performance.now(); setMessage("잠시 쉬는 중이에요."); }
+  if (paused) { state.paused = true; state.pauseStarted = performance.now(); backgroundMusic.pause(); setMessage("잠시 쉬는 중이에요."); }
   else {
     const elapsed = state.pauseStarted ? performance.now() - state.pauseStarted : 0;
     for (const timed of [state.pitch, state.flight, state.foul, state.action, state.fieldAction, state.runningPlay, state.celebration]) if (timed?.start) timed.start += elapsed;
     state.paused = false; state.pauseStarted = null; const action = state.resumeAction; state.resumeAction = null;
+    playBackgroundMusic(state.level);
     if (action) action(); else if (state.phase === "between" && !state.pitch) setTimeout(nextPitch, 180);
   }
   $("pausePanel").hidden = !paused;
@@ -610,7 +629,7 @@ $("pauseButton").addEventListener("click", () => togglePause(true)); $("closePau
 $("quitButton").addEventListener("click", () => { state.token += 1; state.phase = "idle"; togglePause(false); showScreen("level"); });
 $("resultRetry").addEventListener("click", () => startGame(state.level));
 $("resultPrimary").addEventListener("click", () => state.level + 1 < levels.length && state.level + 1 < state.unlocked ? startGame(state.level + 1) : showScreen("home"));
-$("soundToggle").addEventListener("click", () => { state.muted = !state.muted; $("soundToggle").textContent = state.muted ? "🔇" : "🔊"; $("soundToggle").setAttribute("aria-label", state.muted ? "소리 켜기" : "소리 끄기"); });
+$("soundToggle").addEventListener("click", () => { state.muted = !state.muted; if (state.muted) backgroundMusic.pause(); else if (state.screen === "game" && !state.paused) playBackgroundMusic(state.level); $("soundToggle").textContent = state.muted ? "🔇" : "🔊"; $("soundToggle").setAttribute("aria-label", state.muted ? "소리 켜기" : "소리 끄기"); });
 document.addEventListener("keydown", (event) => { if ((event.code === "Space" || event.code === "Enter") && state.screen === "game") { event.preventDefault(); swing(); } if (event.code === "Escape" && state.screen === "game") togglePause(!state.paused); });
 
 function runSelfCheck() {
@@ -625,6 +644,7 @@ function runSelfCheck() {
   console.assert(hitRelayNodes("3루타").join(",") === "1,2,3", "장타 송구는 1루부터 목표 베이스까지 차례로 중계되어야 합니다.");
   console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 바로 1루로 송구해야 합니다.");
   console.assert(flightDuration("3루타") === 1034 && flightDuration("홈런") === 1265, "타격 뒤 공은 기존보다 10% 느리게 날아가야 합니다.");
+  console.assert(BGM_TRACKS.length === levels.length && BGM_TRACKS.every((track) => track.endsWith(".mp3")), "각 레벨에는 한 개의 배경음이 배정되어야 합니다.");
   const homeRunTarget = chooseFlightTarget("홈런"); console.assert(homeRunTarget.ballY < fieldLayout.fenceY, "홈런 종점은 외야 펜스 너머여야 합니다.");
   console.assert(levels.length === 6, "여섯 레벨이 있어야 합니다.");
 }
