@@ -159,7 +159,7 @@ function hitDistance(type) { return type === "단타" || type === "땅볼" ? 1 :
 
 function hitRelayNodes(type) { return Array.from({ length: hitDistance(type) }, (_, index) => index + 1); }
 
-function flightDuration(type) { return type === "땅볼" ? 520 : type === "단타" ? 680 : type === "2루타" ? 820 : type === "3루타" ? 940 : 1150; }
+function flightDuration(type) { return Math.round((type === "땅볼" ? 520 : type === "단타" ? 680 : type === "2루타" ? 820 : type === "3루타" ? 940 : 1150) * 1.1); }
 
 function buildRunningPlay(bases, distance) {
   const next = [false, false, false]; const moves = []; let runs = 0;
@@ -218,7 +218,7 @@ function buildGroundRace(now, target) {
 
 function defensiveThrowDuration(from, to) {
   const throwFactor = Math.max(.2, .32 - state.level * .024);
-  return 340 + Math.hypot(to.x - from.x, to.y - from.y) * throwFactor;
+  return Math.round((340 + Math.hypot(to.x - from.x, to.y - from.y) * throwFactor) * 1.1);
 }
 
 function fieldingReleaseDelay(level = state.level) { return Math.max(150, 260 - level * 18); }
@@ -624,7 +624,7 @@ function runSelfCheck() {
   console.assert(runnerFrame("runner", .5, 520, true) === 1 && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 배트 없는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
   console.assert(hitRelayNodes("3루타").join(",") === "1,2,3", "장타 송구는 1루부터 목표 베이스까지 차례로 중계되어야 합니다.");
   console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 바로 1루로 송구해야 합니다.");
-  console.assert(flightDuration("3루타") === 940 && flightDuration("홈런") === 1150, "외야 타구 체공 시간은 난이도 조절값으로 짧아야 합니다.");
+  console.assert(flightDuration("3루타") === 1034 && flightDuration("홈런") === 1265, "타격 뒤 공은 기존보다 10% 느리게 날아가야 합니다.");
   const homeRunTarget = chooseFlightTarget("홈런"); console.assert(homeRunTarget.ballY < fieldLayout.fenceY, "홈런 종점은 외야 펜스 너머여야 합니다.");
   console.assert(levels.length === 6, "여섯 레벨이 있어야 합니다.");
 }
