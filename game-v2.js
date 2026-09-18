@@ -12,6 +12,7 @@ const characters = [
   { name: "세연", asset: "assets/03-character-yuna-focus.png", motion: "yuna", role: "침착한 타자", detail: "좋은 타격 구간이 조금 더 넓어요.", bonus: .045, runnerSpeed: 1, tag: "집중형" },
   { name: "토리", asset: "assets/04-character-tori-speed.png", motion: "toribat", role: "빠르게 달리는 친구", detail: "베이스 사이를 더 빠르게 달려요.", bonus: .01, runnerSpeed: .84, tag: "스피드형" }
 ];
+const MINJUN_GLASSES = [[.53, .35], [.66, .38], [.35, .26], [.4, .27], [.64, .34]];
 
 const assets = {
   home: "assets/01-home-hero.png", easy: "assets/stadium-easy-v2.png", medium: "assets/stadium-medium-v2.png",
@@ -89,7 +90,7 @@ function showScreen(name) {
 function renderCharacters() {
   $("characterCards").innerHTML = characters.map((character, index) => `
     <button class="character-card ${index === state.character ? "selected" : ""}" data-character="${index}" type="button" aria-pressed="${index === state.character}">
-      <span class="character-icon"><img src="${character.asset}" alt="${character.name} 캐릭터"></span>
+      <span class="character-icon">${character.motion === "minjun" ? '<span class="card-glasses" aria-hidden="true"></span>' : ""}<img src="${character.asset}" alt="${character.name} 캐릭터"></span>
       <h3>${character.name}</h3><p>${character.role}<br>${character.detail}</p><span class="tag">${character.tag}</span>
     </button>`).join("");
   document.querySelectorAll("[data-character]").forEach((button) => button.addEventListener("click", () => { state.character = Number(button.dataset.character); renderCharacters(); tone(420, .05); }));
@@ -412,6 +413,15 @@ function drawFrame(name, frame, x, y, maxWidth, maxHeight, flip = false, filter 
   const safeFrame = Math.max(0, Math.min(4, Math.floor(frame))); const image = images[`${name}-${safeFrame}`]; if (!image?.complete || !image.naturalWidth) return;
   const scale = Math.min(maxWidth / image.naturalWidth, maxHeight / image.naturalHeight); const width = image.naturalWidth * scale, height = image.naturalHeight * scale;
   ctx.save(); ctx.filter = filter; ctx.translate(x, 0); if (flip) ctx.scale(-1, 1); ctx.drawImage(image, -width / 2, y - height, width, height); ctx.restore();
+  if (name === "minjun") drawMinjunGlasses(x - width / 2, y - height, width, height, safeFrame);
+}
+
+function drawMinjunGlasses(left, top, width, height, frame) {
+  const [faceX, faceY] = MINJUN_GLASSES[frame], unit = Math.min(width, height * .55), lensWidth = unit * .15, lensHeight = unit * .1, gap = unit * .025;
+  const centerX = left + width * faceX, centerY = top + height * faceY, offset = lensWidth / 2 + gap / 2;
+  ctx.save(); ctx.strokeStyle = "#10233f"; ctx.lineWidth = Math.max(1.5, unit * .018); ctx.fillStyle = "rgba(220,244,255,.12)";
+  for (const lensX of [centerX - offset, centerX + offset]) { ctx.beginPath(); ctx.ellipse(lensX, centerY, lensWidth / 2, lensHeight / 2, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+  ctx.beginPath(); ctx.moveTo(centerX - gap / 2, centerY); ctx.lineTo(centerX + gap / 2, centerY); ctx.stroke(); ctx.restore();
 }
 
 function drawStandalone(name, x, y, maxWidth, maxHeight, flip = false) {
@@ -661,6 +671,7 @@ function runSelfCheck() {
   console.assert(flightDuration("3루타") === 1034 && flightDuration("홈런") === 1265, "타격 뒤 공은 기존보다 10% 느리게 날아가야 합니다.");
   console.assert(BGM_TRACKS.length === levels.length && BGM_TRACKS.every((track) => track.endsWith(".mp3")), "각 레벨에는 한 개의 배경음이 배정되어야 합니다.");
   console.assert(Object.keys(SFX_TRACKS).length === 6 && Object.values(SFX_TRACKS).every((track) => track.endsWith(".mp3")), "여섯 가지 플레이 효과음이 있어야 합니다.");
+  console.assert(MINJUN_GLASSES.length === 5, "정우의 다섯 동작 프레임에 안경 위치가 있어야 합니다.");
   const homeRunTarget = chooseFlightTarget("홈런"); console.assert(homeRunTarget.ballY < fieldLayout.fenceY, "홈런 종점은 외야 펜스 너머여야 합니다.");
   console.assert(levels.length === 6, "여섯 레벨이 있어야 합니다.");
 }
