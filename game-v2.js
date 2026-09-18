@@ -1,12 +1,12 @@
 const levels = [
-  { name: "동네 야구장", target: 3, pitchMs: 2000, window: .28, outChance: .1, doublePlayChance: 0, foulChance: .06, type: "직선 공", background: "easy", color: "#7ec8ed" },
-  { name: "바람 부는 경기장", target: 4, pitchMs: 1850, window: .25, outChance: .2, doublePlayChance: .08, foulChance: .08, type: "높은 공", background: "easy", color: "#a9d6f2" },
-  { name: "해 질 녘 경기장", target: 5, pitchMs: 1700, window: .22, outChance: .3, doublePlayChance: .15, foulChance: .1, type: "빠른 공", background: "medium", color: "#f4b67c" },
-  { name: "구불구불 경기장", target: 6, pitchMs: 1550, window: .2, outChance: .4, doublePlayChance: .22, foulChance: .12, type: "휘는 공", background: "medium", color: "#cdb5ef" },
-  { name: "풍선 경기장", target: 8, pitchMs: 1400, window: .18, outChance: .5, doublePlayChance: .3, foulChance: .14, type: "장애물 등장", background: "hard", color: "#8bd7a1" },
-  { name: "챔피언 경기장", target: 10, pitchMs: 1250, window: .16, outChance: .6, doublePlayChance: .38, foulChance: .16, type: "빠른 공 + 장애물", background: "hard", color: "#f28b7a" }
+  { name: "동네 야구장", target: 3, pitchMs: 2000, window: .28, successChance: .9, hitFlightScale: 2.45, doublePlayChance: 0, foulChance: .06, type: "직선 공", background: "easy", color: "#7ec8ed" },
+  { name: "바람 부는 경기장", target: 4, pitchMs: 1850, window: .25, successChance: .8, hitFlightScale: 2.39, doublePlayChance: .08, foulChance: .08, type: "높은 공", background: "easy", color: "#a9d6f2" },
+  { name: "해 질 녘 경기장", target: 5, pitchMs: 1700, window: .22, successChance: .7, hitFlightScale: 2.33, doublePlayChance: .15, foulChance: .1, type: "빠른 공", background: "medium", color: "#f4b67c" },
+  { name: "구불구불 경기장", target: 6, pitchMs: 1550, window: .2, successChance: .6, hitFlightScale: 2.27, doublePlayChance: .22, foulChance: .12, type: "휘는 공", background: "medium", color: "#cdb5ef" },
+  { name: "풍선 경기장", target: 8, pitchMs: 1400, window: .18, successChance: .5, hitFlightScale: 2.21, doublePlayChance: .3, foulChance: .14, type: "장애물 등장", background: "hard", color: "#8bd7a1" },
+  { name: "챔피언 경기장", target: 10, pitchMs: 1250, window: .16, successChance: .4, hitFlightScale: 2.15, doublePlayChance: .38, foulChance: .16, type: "빠른 공 + 장애물", background: "hard", color: "#f28b7a" }
 ];
-const BALL_FLIGHT_SLOWDOWN = 1.2, RUNNER_SPEED_MULTIPLIER = 1.05;
+const RUNNER_SPEED_MULTIPLIER = 1.05;
 
 const characters = [
   { name: "정우", asset: "assets/02-character-minjun-power-glasses.png", motion: "minjun-glasses", role: "힘껏 치는 친구", detail: "홈런 타이밍이 조금 더 넓어요.", bonus: .025, runnerSpeed: 1, tag: "파워형" },
@@ -147,11 +147,12 @@ function resolveFoul() {
 }
 
 function resolveHit(delta) {
-  let type = "단타"; if (delta < .025) type = "홈런"; else if (delta < .055) type = "3루타"; else if (delta < .09) type = "2루타";
-  const defensiveOut = type !== "홈런" && Math.random() < levels[state.level].outChance;
-  if (defensiveOut && Math.random() < .55) type = "땅볼";
+  let type = "단타"; if (delta < .008) type = "홈런"; else if (delta < .017) type = "3루타"; else if (delta < .035) type = "2루타";
+  const safeHit = battedBallSucceeded(state.level);
+  if (!safeHit && type === "홈런") type = "단타";
+  if (!safeHit && Math.random() < .55) type = "땅볼";
   const start = performance.now(), distance = hitDistance(type), preview = buildRunningPlay(state.bases, distance);
-  state.strikes = 0; playEffectSound("bat"); state.flight = { start, duration: flightDuration(type), type, caught: defensiveOut && type !== "땅볼", target: chooseFlightTarget(type) };
+  state.strikes = 0; playEffectSound("bat"); state.flight = { start, duration: flightDuration(type, safeHit), type, caught: false, target: chooseFlightTarget(type) };
   state.runningPlay = { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
   if (state.action) state.action.outcome = type;
   const hitMessage = type === "단타" ? "짧은 외야 타구! 주자와 송구의 승부예요." : type === "2루타" ? "외야 깊은 타구! 2루까지 달려요." : "담장 쪽 깊은 타구! 3루에 도전해요.";
@@ -172,7 +173,12 @@ function hitDistance(type) { return type === "단타" || type === "땅볼" ? 1 :
 
 function hitRelayNodes(type) { return Array.from({ length: hitDistance(type) }, (_, index) => index + 1); }
 
-function flightDuration(type) { return Math.round((type === "땅볼" ? 520 : type === "단타" ? 680 : type === "2루타" ? 820 : type === "3루타" ? 940 : 1150) * 1.1 * BALL_FLIGHT_SLOWDOWN); }
+function battedBallSucceeded(levelIndex, random = Math.random) { return random() < levels[levelIndex].successChance; }
+
+function flightDuration(type, safeHit) {
+  const base = type === "땅볼" ? 520 : type === "단타" ? 680 : type === "2루타" ? 820 : type === "3루타" ? 940 : 1150;
+  return Math.round(base * 1.1 * (safeHit ? levels[state.level].hitFlightScale : .9));
+}
 
 function buildRunningPlay(bases, distance) {
   const next = [false, false, false]; const moves = []; let runs = 0;
@@ -231,7 +237,7 @@ function buildGroundRace(now, target) {
 
 function defensiveThrowDuration(from, to) {
   const throwFactor = Math.max(.2, .32 - state.level * .024);
-  return Math.round((340 + Math.hypot(to.x - from.x, to.y - from.y) * throwFactor) * 1.1 * BALL_FLIGHT_SLOWDOWN);
+  return Math.round((340 + Math.hypot(to.x - from.x, to.y - from.y) * throwFactor) * 1.1);
 }
 
 function fieldingReleaseDelay(level = state.level) { return Math.max(150, 260 - level * 18); }
@@ -659,9 +665,11 @@ function runSelfCheck() {
   console.assert(runnerFrame("runner", .5, 520, true) === 1 && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 배트 없는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
   console.assert(hitRelayNodes("3루타").join(",") === "1,2,3", "장타 송구는 1루부터 목표 베이스까지 차례로 중계되어야 합니다.");
   console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 바로 1루로 송구해야 합니다.");
-  console.assert(flightDuration("3루타") === 1241 && flightDuration("홈런") === 1518, "타격 뒤 공은 현재보다 1.2배 느리게 날아가야 합니다.");
-  console.assert(BALL_FLIGHT_SLOWDOWN === 1.2 && RUNNER_SPEED_MULTIPLIER === 1.05, "공과 주자 속도 보정값이 맞아야 합니다.");
-  console.assert(levels.map((level) => level.outChance * 10).join(",") === "1,2,3,4,5,6", "수비 아웃 목표는 레벨마다 열 번 중 1~6번이어야 합니다.");
+  result = buildRunningPlay([false, false, false], 1); console.assert(result.bases[0] && !result.bases[1] && !result.bases[2], "일반 단타의 타자주자는 1루에서 멈춰야 합니다.");
+  console.assert(flightDuration("단타", true) === 1833 && flightDuration("단타", false) === 673, "타구 체공 시간은 세이프·아웃 난이도에 맞아야 합니다.");
+  console.assert(RUNNER_SPEED_MULTIPLIER === 1.05, "주자 속도 보정값이 맞아야 합니다.");
+  console.assert(levels.map((level) => level.successChance * 10).join(",") === "9,8,7,6,5,4", "타구 성공 목표는 레벨마다 열 번 중 9~4번이어야 합니다.");
+  console.assert(battedBallSucceeded(0, () => .89) && !battedBallSucceeded(5, () => .41), "레벨별 타구 성공 판정이 맞아야 합니다.");
   console.assert(BGM_TRACKS.length === levels.length && BGM_TRACKS.every((track) => track.endsWith(".mp3")), "각 레벨에는 한 개의 배경음이 배정되어야 합니다.");
   console.assert(Object.keys(SFX_TRACKS).length === 6 && Object.values(SFX_TRACKS).every((track) => track.endsWith(".mp3")), "여섯 가지 플레이 효과음이 있어야 합니다.");
   console.assert(images["minjun-glasses-0"].src.endsWith("minjun-glasses-0.png"), "정우 안경 동작 이미지가 있어야 합니다.");
