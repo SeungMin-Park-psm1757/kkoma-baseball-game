@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#10233f">
   <title>꼬마 야구단</title>
-  <link rel="stylesheet" href="style.css?v=auto-run-v2">
+  <link rel="stylesheet" href="style.css?v=portrait-results-v1">
 </head>
 <body>
   <main class="app-shell">
@@ -22,6 +22,7 @@
         <p class="eyebrow">오늘의 한 판</p>
         <h1 id="homeTitle">공이 오면,<br><span>힘껏 쳐요!</span></h1>
         <p class="lead">타이밍을 맞춰 안타와 홈런을 만들거나<br>투수가 되어 삼진을 잡아 보세요.</p>
+        <button id="introMusicButton" class="music-start" type="button" aria-label="인트로 음악 재생">♪ 인트로 음악 듣기</button>
         <div class="mode-buttons">
           <button id="startButton" class="primary-button large" type="button">⚾ 타자 하기 <span>→</span></button>
           <button id="pitcherStart" class="secondary-button large" type="button">🥎 투수 하기 <span>→</span></button>
@@ -95,15 +96,30 @@
     </section>
 
     <section id="resultScreen" class="screen result-screen" aria-labelledby="resultTitle">
-      <img id="resultArt" class="result-art" src="assets/09-result-win.png" alt="경기 결과 장면">
-      <div id="resultBadge" class="result-badge">★</div>
-      <p class="eyebrow">경기 결과</p>
-      <h2 id="resultTitle">참 잘했어요!</h2>
-      <p id="resultCopy">좋은 타격이었어요.</p>
-      <div class="result-stats"><span><span id="resultScoreLabel">점수</span><strong id="resultScore">0</strong></span><span><span id="resultHomeRunsLabel">홈런</span><strong id="resultHomeRuns">0</strong></span></div>
-      <div class="result-actions">
-        <button id="resultPrimary" class="primary-button" type="button">다음 경기 <span>→</span></button>
-        <button id="resultRetry" class="secondary-button" type="button">다시 해보기</button>
+      <div class="result-card">
+        <div class="result-hero">
+          <img id="resultArt" class="result-art" src="assets/09-result-win.png" alt="경기 결과 일러스트">
+          <div id="resultBadge" class="result-badge" aria-hidden="true">★</div>
+        </div>
+        <div class="result-body">
+          <p class="eyebrow">오늘의 경기 결과</p>
+          <h2 id="resultTitle">참 잘했어요!</h2>
+          <p id="resultCopy" class="result-copy">좋은 타격이었어요.</p>
+          <div class="result-stats" aria-label="경기 기록">
+            <div class="result-stat">
+              <span id="resultScoreLabel">점수</span>
+              <strong id="resultScore">0</strong>
+            </div>
+            <div class="result-stat">
+              <span id="resultHomeRunsLabel">홈런</span>
+              <strong id="resultHomeRuns">0</strong>
+            </div>
+          </div>
+          <div class="result-actions">
+            <button id="resultPrimary" class="primary-button" type="button">다음 경기 →</button>
+            <button id="resultRetry" class="secondary-button" type="button">한 번 더 도전</button>
+          </div>
+        </div>
       </div>
     </section>
 
@@ -118,6 +134,6 @@
       </div>
     </div>
   </main>
-  <script src="game-v2.js"></script>
+  <script src="game-v2.js?v=portrait-results-v1"></script>
 </body>
 </html>
