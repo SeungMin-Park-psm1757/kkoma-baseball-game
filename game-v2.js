@@ -250,9 +250,13 @@ function resolveHit(delta, cpuHit = false) {
   if (!safeHit && Math.random() < .55) type = "땅볼";
   const start = performance.now(), distance = hitDistance(type), duration = flightDuration(type, safeHit), target = chooseFlightTarget(type);
   state.flight = { start, duration, type, caught: false, target };
-  const preview = buildRunningPlay(state.bases, distance, target, start + duration);
+  const automatic = type !== "홈런" && type !== "땅볼" ?
+    planAutomaticOutfieldPlay(state.bases, distance, target, start, start + duration) : null;
+  const preview = automatic ? null : buildRunningPlay(state.bases, distance, target, start + duration);
   state.strikes = 0; playEffectSound("bat");
-  state.runningPlay = { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
+  state.runningPlay = automatic ? automatic.play :
+    { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
+  state.fieldAction = automatic?.action || null;
   if (state.action) { state.action.outcome = type; if (cpuHit) state.action.hitAt = start; }
   const hitMessage = type === "단타" ? "짧은 외야 타구! 주자와 송구의 승부예요." : type === "2루타" ? "외야 깊은 타구! 2루까지 달려요." : "담장 쪽 깊은 타구! 3루에 도전해요.";
   state.phase = "flight"; updateHud(); setMessage(type === "홈런" ? "완벽해요! 담장 너머로 날아가요!" : type === "땅볼" ? "땅볼! 수비수가 달려와요!" : hitMessage); tone(type === "홈런" ? 700 : 520, .12);
@@ -359,29 +363,100 @@ function defensiveThrowDuration(from, to) {
 
 function fieldingReleaseDelay(level = state.level) { return Math.max(150, 260 - level * 18); }
 
-function buildHitRace(now, type, target) {
-  const planned = state.runningPlay;
-  const result = { bases: [...planned.resultBases], runs: planned.runs, moves: planned.moves.map((move) => ({ ...move })) };
-  const candidate = chooseThrowTarget(result.moves, target, now);
-  const node = candidate.endNode, from = { x: target.fieldX, y: target.fieldY }, throwStart = now + fieldingReleaseDelay();
-  const receive = throwStart + defensiveThrowDuration(from, BASE_PATH[node]);
-  const runnerArrival = state.flight.start + runningDuration(node - candidate.startNode, candidate.startNode, candidate.character);
-  const out = receive < runnerArrival;
-  const text = out ? (node === 1 ? "공이 먼저! 1루 아웃!" : `공이 먼저! ${BASE_PATH[node].label} 태그 아웃!`) : `주자가 먼저! ${BASE_PATH[node].label} 세이프!`;
-  const leg = { node, from, throwStart, receive, throwPlayed: false };
-  if (out) { candidate.out = true; candidate.outAt = receive; result.bases[node - 1] = false; if (state.outs === 2) result.runs = 0; }
-  const finalAt = Math.max(receive, state.flight.start + playDuration(result.moves));
-  return { result, finalAt, action: { kind: "hitRace", start: now, target, legs: [leg], stages: [{ at: receive, out, text, fired: false }] } };
-}
+// Event-driven baseball: choose throws only when a defender actually gains possession,
+// and consider each extra base only when a runner reaches the preceding base.
+function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
+  const from = { x: target.fieldX, y: target.fieldY };
+  const SAFE_MARGIN_MS = 190, TAG_MS = 95, TRANSFER_MS = 160;
+  const runners = [];
+  for (let index = 2; index >= 0; index -= 1) if (bases[index])
+    runners.push({ id: `runner-${index}`, startNode: index + 1, node: index + 1,
+      character: null, maxNode: Math.min(4, index + 1 + distance), out: false, moving: false, segments: [] });
+  runners.push({ id: "batter", startNode: 0, node: 0, character: state.character,
+    maxNode: Math.min(4, distance), out: false, moving: false, segments: [] });
 
-function chooseThrowTarget(moves, target, now) {
-  const candidates = moves.filter((move) => move.endNode > move.startNode && move.endNode < 4).map((move) => {
-    const receive = now + fieldingReleaseDelay() + defensiveThrowDuration({ x: target.fieldX, y: target.fieldY }, BASE_PATH[move.endNode]);
-    const arrival = state.flight.start + runningDuration(move.endNode - move.startNode, move.startNode, move.character);
-    return { move, margin: receive - arrival };
-  });
-  const outCandidate = candidates.filter((candidate) => candidate.margin < 0).sort((a, b) => a.margin - b.margin)[0];
-  return (outCandidate || candidates.sort((a, b) => b.move.endNode - a.move.endNode)[0]).move;
+  const events = [], legs = [], stages = [];
+  let ball = { at: fieldedAt, from, pending: null }, outs = 0, runs = 0;
+  function enqueue(kind, at, runner = null) { events.push({ kind, at, runner }); }
+
+  function beginLeg(runner, at, nextNode) {
+    const duration = runningDuration(1, runner.node, runner.character);
+    const segment = { id: runner.id, startNode: runner.node, endNode: nextNode, character: runner.character,
+      startAt: at, endAt: at + duration, duration };
+    runner.segments.push(segment);
+    runner.moving = true; runner.nextNode = nextNode; runner.arriveAt = segment.endAt;
+    enqueue("arrive", segment.endAt, runner);
+  }
+  for (const runner of runners) beginLeg(runner, hitAt, runner.node + 1);
+  enqueue("field", fieldedAt);
+
+  // Use the same ball-possession history for every runner decision.
+  function earliestDefenseAt(node, time) {
+    const possessionAt = ball.pending ? ball.pending.receive + TRANSFER_MS : Math.max(ball.at, time);
+    const position = ball.pending ? BASE_PATH[ball.pending.node] : ball.from;
+    return Math.max(time, possessionAt) + defensiveThrowDuration(position, BASE_PATH[node]);
+  }
+  function chooseLiveThrow(time) {
+    const possibilities = runners.filter(runner => runner.moving && !runner.out && runner.nextNode < 4 && runner.arriveAt > time)
+      .map((runner) => {
+        const receive = time + defensiveThrowDuration(ball.from, BASE_PATH[runner.nextNode]);
+        return { runner, node: runner.nextNode, arrival: runner.arriveAt, receive, margin: receive + TAG_MS - runner.arriveAt };
+      });
+    if (!possibilities.length) return null;
+    // When an out is possible, pursue the nearest genuine play. Otherwise throw ahead
+    // of the most advanced active runner, never to an already-passed base.
+    const outChoices = possibilities.filter(p => p.margin < 0).sort((a, b) => a.arrival - b.arrival);
+    return outChoices[0] || possibilities.sort((a, b) => b.node - a.node || a.arrival - b.arrival)[0];
+  }
+  function release(time) {
+    if (legs.length >= 2) return;
+    const choice = chooseLiveThrow(time);
+    if (!choice) return;
+    const leg = { node: choice.node, from: { ...ball.from }, throwStart: time,
+      receive: choice.receive, throwPlayed: false, targetId: choice.runner.id };
+    legs.push(leg);
+    ball.pending = leg;
+    enqueue("receive", leg.receive, choice.runner);
+  }
+
+  // Arrival, reception, and fielding are handled chronologically, not as a fixed relay chain.
+  for (let guard = 0; events.length && guard < 60; guard += 1) {
+    events.sort((a, b) => a.at - b.at || ({ receive: 0, field: 1, arrive: 2 }[a.kind] - { receive: 0, field: 1, arrive: 2 }[b.kind]));
+    const event = events.shift(), time = event.at;
+    if (event.kind === "field") { ball.at = time + fieldingReleaseDelay(); release(ball.at); continue; }
+    if (event.kind === "receive") {
+      const leg = ball.pending;
+      if (!leg) continue;
+      ball.from = BASE_PATH[leg.node]; ball.at = time + TRANSFER_MS; ball.pending = null;
+      const runner = event.runner, tagAt = runner.arriveAt + TAG_MS;
+      const out = runner.moving && !runner.out && runner.nextNode === leg.node && time + TAG_MS < runner.arriveAt;
+      if (out) { runner.out = true; outs += 1; runner.segments[runner.segments.length - 1].outAt = tagAt; }
+      const text = out ? (leg.node === 1 ? "공이 먼저! 1루 아웃!" : `태그 성공! ${BASE_PATH[leg.node].label} 아웃!`) :
+        `${BASE_PATH[leg.node].label} 세이프!`;
+      stages.push({ at: out ? tagAt : Math.max(time, runner.arriveAt), out, text, fired: false });
+      if (outs < 3) release(ball.at);
+      continue;
+    }
+    const runner = event.runner;
+    if (runner.out) continue;
+    runner.moving = false; runner.node = runner.nextNode;
+    if (runner.node === 4) { runs += 1; continue; }
+    if (runner.node >= runner.maxNode) continue;
+    const nextNode = runner.node + 1, nextAt = time + runningDuration(1, runner.node, runner.character);
+    // The next base must be available and the runner must have a safe margin over the ball.
+    const occupied = runners.some(other => other !== runner && !other.out && !other.moving && other.node === nextNode);
+    if (!occupied && nextAt + SAFE_MARGIN_MS < earliestDefenseAt(nextNode, time)) beginLeg(runner, time, nextNode);
+  }
+
+  const moves = runners.flatMap(runner => runner.segments);
+  const next = [false, false, false];
+  for (const runner of runners) if (!runner.out && runner.node >= 1 && runner.node <= 3) next[runner.node - 1] = true;
+  const lastAt = Math.max(fieldedAt, ...moves.map(move => move.outAt || move.endAt), ...legs.map(leg => leg.receive), ...stages.map(stage => stage.at));
+  const action = legs.length ? { kind: "hitRace", start: fieldedAt, target, legs, stages } : null;
+  return { play: { start: hitAt, duration: lastAt - hitAt, moves, runners, resultBases: next, runs,
+    type: distance === 1 ? "단타" : distance === 2 ? "2루타" : "3루타", dynamic: true, lastAt,
+    resultMessage: outs ? "수비가 주자를 잡았어요!" : runs ? `${runs}점 들어왔어요!` : "주자가 안전한 베이스에 멈췄어요!",
+    committed: false }, action };
 }
 
 function runningDuration(distance, startNode = 0, character = state.character) {
@@ -407,10 +482,18 @@ function finishFlight() {
     state.runningPlay = { start: state.flight.start, duration, moves: result.moves, resultBases: result.bases, runs: result.runs, type, committed: false };
     state.fieldAction = null; state.celebration = { start: now }; setMessage("홈런! 공이 외야 담장을 넘어갔어요!"); showEffect("홈런!", "homerun"); playEffectSound("homerun"); continuePlay(Math.max(0, state.flight.start + duration - now) + 450); return;
   }
-  const race = buildHitRace(now, type, target), finalAt = race.finalAt;
-  state.runningPlay = { start: state.flight.start, duration: playDuration(race.result.moves), moves: race.result.moves, resultBases: race.result.bases, runs: race.result.runs, type, resultMessage: race.action.stages[0].text, committed: false };
-  state.runningPlay.resultMessage = race.action.stages[race.action.stages.length - 1].text;
-  state.fieldAction = race.action; playEffectSound("glove"); setMessage(`${target.label}가 잡아 ${BASE_PATH[race.action.legs[0].node].label}로 송구해요!`); tone(620, .12); continuePlay(finalAt - now + 850);
+  if (state.runningPlay?.dynamic) {
+    const play = state.runningPlay, first = state.fieldAction?.legs[0];
+    playEffectSound("glove");
+    setMessage(first ? `${target.label}가 잡아 ${BASE_PATH[first.node].label}로 송구해요!` :
+      `${target.label}가 잡았어요! 주자들이 안전하게 멈춰요.`);
+    tone(620, .12); continuePlay(Math.max(0, play.lastAt - now) + 850); return;
+  }
+  // Defensive fallback for older saved play shapes (not used by normal new hits).
+  const result = buildRunningPlay(state.bases, distance);
+  state.runningPlay = { start: state.flight.start, duration: playDuration(result.moves), moves: result.moves,
+    resultBases: result.bases, runs: result.runs, type, committed: false };
+  continuePlay(playDuration(result.moves) + 650);
 }
 
 function commitRunningPlay() {
@@ -855,10 +938,10 @@ function runSelfCheck() {
   result = buildGroundResult([true, true, false], 3, true, false, 0); console.assert(result.bases[0] && result.bases[1] && !result.bases[2], "3루 포스아웃 뒤 타자와 1루 주자는 살아야 합니다.");
   result = buildGroundResult([true, true, true], 4, false, false, 0); console.assert(result.runs === 1 && result.bases.every(Boolean), "만루에서 홈 세이프면 1점과 만루가 유지되어야 합니다.");
   console.assert(runnerFrame("runner", .5, 520, true) === 1 && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 배트 없는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
-  const savedFlight = state.flight; state.flight = { start: 0 };
-  const directTarget = chooseThrowTarget([{ startNode: 1, endNode: 2, character: null }], { fieldX: 705, fieldY: 212 }, 2000);
-  state.flight = savedFlight;
-  console.assert(directTarget.endNode === 2, "1루 주자가 이미 2루로 향했으면 외야수는 2루에 직접 송구해야 합니다.");
+  const dynamic = planAutomaticOutfieldPlay([false, false, false], 2,
+    { fielderIndex: 6, fieldX: 705, fieldY: 212, label: "우익수" }, 0, 2100);
+  console.assert(dynamic.play.dynamic && dynamic.play.runners.length === 1, "타격 후 주자별 자동 판단이 구성되어야 합니다.");
+  console.assert(dynamic.action === null || dynamic.action.legs.every(leg => leg.node >= 1 && leg.node <= 3), "송구는 실제 베이스를 향해야 합니다.");
   console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 곧바로 판단한 베이스에 송구해야 합니다.");
   result = buildRunningPlay([false, false, false], 1); console.assert(result.bases[0] && !result.bases[1] && !result.bases[2], "일반 단타의 타자주자는 1루에서 멈춰야 합니다.");
   console.assert(flightDuration("단타", true) === 1833 && flightDuration("단타", false) === 673, "타구 체공 시간은 세이프·아웃 난이도에 맞아야 합니다.");
