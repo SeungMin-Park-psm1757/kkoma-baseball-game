@@ -364,7 +364,7 @@ const BASEBALL_SPELLING_QUIZZES = [
   // The source game's advanced chapter: two-digit sums/differences and 2..5 times 2..9.
   function makeMath(r=Math.random,op=pick(["+","-","×"],r)){
     const a=op==="+"?integer(10,30,r):op==="-"?integer(15,35,r):integer(2,5,r);
-    const b=op==="+"?integer(5,20,r):op==="-"?integer(5,15,r):integer(2,9,r);
+    const b=op==="+"?integer(5,20,r):op==="-"?integer(5,15,r):integer(1,9,r);
     const answer=op==="+"?a+b:op==="-"?a-b:a*b,choices=new Set([answer]);
     for(let i=1;choices.size<4&&i<20;i++)choices.add(Math.max(0,answer+(i%2?i:-i)));
     return {kind:"math",prompt:a+" "+op+" "+b+" = ?",answer,options:shuffle([...choices],r),a,b,op};
