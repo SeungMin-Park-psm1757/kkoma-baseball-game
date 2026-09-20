@@ -58,7 +58,7 @@ configureField("easy");
 const state = {
   screen: "home", character: 0, level: 0, unlocked: 1, score: 0, outs: 0, bases: [false, false, false],
   homeRuns: 0, phase: "idle", pitch: null, flight: null, paused: false, pauseStarted: null, resumeAction: null,
-  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, contact: null, lastGameWon: false, effectToken: 0
+  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, contact: null, lastGameWon: false, homeRunAt: null, effectToken: 0
 };
 const BGM_TRACKS = [
   "assets/music/level-1-sunny.mp3", "assets/music/level-2-sunny.mp3", "assets/music/level-3-sunset.mp3",
@@ -147,7 +147,7 @@ function renderLevels() {
 function startGame(levelIndex) {
   Object.assign(state, { level: levelIndex, score: 0, outs: 0, strikes: 0, balls: 0, runsAllowed: 0, bases: [false, false, false], homeRuns: 0, phase: "between", pitch: null, flight: null, action: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, paused: false });
   configureField(levels[levelIndex].background);
-  state.contact = null; $("contactFeedback").hidden = true;
+  state.contact = null; state.homeRunAt = null; $("contactFeedback").hidden = true;
   state.token += 1; $("gameEyebrow").textContent = `LEVEL ${levelIndex + 1}`; $("gameTitle").textContent = levels[levelIndex].name;
   $("swingButton").textContent = state.mode === "pitching" ? "🥎 지금 던져요!" : "⚾ 지금 쳐요!";
   showScreen("game"); playBackgroundMusic(levelIndex); updateHud(); setMessage(state.mode === "pitching" ? "게이지 가운데에서 던져요!" : "공을 보고, 준비되면 눌러요!");
@@ -342,7 +342,8 @@ function resolveHit(delta, cpuHit = false, signedDelta = 0) {
     { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases,
       runs: preview.runs, type, preview: true, committed: false };
   state.fieldAction = automatic?.action || null;
-  if (state.action) { state.action.outcome = type; if (cpuHit) state.action.hitAt = start; }
+  if (state.action) { state.action.outcome = type; state.action.hitAt = start; }
+  if (!cpuHit && type === "홈런") state.homeRunAt = start;
   if (!cpuHit) showContactFeedback(contact);
   state.phase = "flight"; updateHud();
   setMessage(caught ? `${contact.shape}! 외야수가 공을 따라가요!` :
@@ -760,7 +761,7 @@ function draw() {
   const flightProgress = state.phase === "flight" && state.flight ? Math.min(1, (now - state.flight.start) / state.flight.duration) : null;
   if (flightProgress !== null) { drawTrajectory(); drawFieldingAction(flightProgress); }
   else if (state.phase === "resulting" && state.fieldAction) drawFieldingResult(now);
-  drawCatcher(); drawBatter(now); drawCelebration(now);
+  drawCatcher(); drawHomeRunSpotlight(now); drawBatter(now); drawCelebration(now);
   if (state.phase === "pitching" && state.pitch) {
     const progress = Math.min(1, (now - state.pitch.start) / state.pitch.duration);
     const pitchX = fieldLayout.mound[0], pitchY = fieldLayout.mound[1] + 10;
@@ -842,21 +843,59 @@ function drawPitcher(now) {
   else drawOpponentFrame(frame, x, y, 78, 92);
 }
 
+// Existing full-body sprite frames: 0 ready, 1 load, 2 contact, 3 follow-through,
+// 4 celebration. A miss uses the follow-through without showing the ball in frame 2.
+function batterAnimationFrame(action, now) {
+  if (!action || action.kind !== "swing") return 0;
+  const elapsed = Math.max(0, now - action.start);
+  if (elapsed < 85) return 1;
+  if (action.outcome === "miss") return elapsed < 290 ? 3 : 0;
+  if (action.outcome === "홈런") return elapsed < 610 ? 2 : elapsed < 780 ? 3 : 4;
+  return elapsed < 165 ? 2 : elapsed < 370 ? 3 : 0;
+}
+
+function drawHomeRunSpotlight(now) {
+  if (state.mode !== "batting" || state.homeRunAt === null) return;
+  const elapsed = now - state.homeRunAt;
+  if (elapsed < 0 || elapsed > 650) return;
+  const fade = Math.min(1, elapsed / 95, (650 - elapsed) / 130);
+  ctx.save(); ctx.globalAlpha = .84 * Math.max(0, fade);
+  const gradient = ctx.createRadialGradient(264, 397, 85, 264, 397, 640);
+  gradient.addColorStop(0, "rgba(5,14,38,0)");
+  gradient.addColorStop(.32, "rgba(5,14,38,.16)");
+  gradient.addColorStop(1, "rgba(5,14,38,.75)");
+  ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "#ffe38a"; ctx.lineWidth = 4 + Math.sin(elapsed / 70) * 1.2;
+  ctx.beginPath(); ctx.ellipse(264, 385, 99, 132, -.12, 0, Math.PI * 2); ctx.stroke();
+  for (let i = 0; i < 11; i++) {
+    const angle = i * Math.PI * 2 / 11 + elapsed / 1100;
+    const x = 264 + Math.cos(angle) * 128, y = 392 + Math.sin(angle) * 156;
+    ctx.fillStyle = i % 2 ? "#fff4c8" : "#ffc94a";
+    ctx.beginPath(); ctx.arc(x, y, 3 + i % 3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawBatter(now) {
-  if (state.runningPlay && (state.mode !== "pitching" || !state.action?.hitAt || now - state.action.hitAt > 340)) return;
+  const action = state.action;
   if (state.mode === "pitching") {
-    const action = state.action, hitElapsed = action?.hitAt ? now - action.hitAt : -1;
+    if (state.runningPlay && (!action?.hitAt || now - action.hitAt > 340)) return;
+    const hitElapsed = action?.hitAt ? now - action.hitAt : -1;
     let frame = 0;
     if (hitElapsed >= 0 && hitElapsed < 340) frame = hitElapsed < 130 ? 2 : 3;
-    else if (action?.kind === "throw" && state.phase === "pitching") frame = now - action.start > state.pitch.duration * .55 ? 1 : 0;
+    else if (action?.kind === "throw" && state.phase === "pitching")
+      frame = now - action.start > state.pitch.duration * .55 ? 1 : 0;
     drawGroundShadow(264, 509, 65, .18);
-    // An existing bat-holding sprite is preferable to a fielder with a glove.
     drawFrame("toribat", frame, 264, 509, 190, 213, false, state.level === 1 ? "hue-rotate(145deg)" : "none");
     return;
   }
-  const action = state.action; let frame = 0;
-  if (action?.kind === "swing") { const elapsed = now - action.start; frame = elapsed < 110 ? 1 : action.outcome === "홈런" && elapsed > 420 ? 4 : action.outcome === "miss" ? 1 : 2; }
-  drawGroundShadow(264, 509, 74, .22); drawFrame(characters[state.character].motion, frame, 264, 509, 218, 238);
+  const elapsed = action?.kind === "swing" ? now - action.start : Infinity;
+  // The batter remains visible long enough for contact and a 0.5s HR hold,
+  // then yields the field to the base-running sprite.
+  if (state.runningPlay && (action?.outcome === "홈런" ? elapsed >= 820 : elapsed >= 390)) return;
+  const frame = batterAnimationFrame(action, now);
+  drawGroundShadow(264, 509, 74, .22);
+  drawFrame(characters[state.character].motion, frame, 264, 509, 218, 238);
 }
 
 function drawCatcher() {
@@ -1230,6 +1269,13 @@ function runSelfCheck() {
   console.assert(isPitchInZone(centeredPitch), "정중앙을 정확히 겨냥한 공은 스트라이크존에 들어와야 합니다.");
   console.assert(!isPitchInZone({ x: PITCH_ZONE.x - 1, y: centerAim.y }), "존 바깥의 공은 볼이어야 합니다.");
   console.assert(PITCH_AIM_LABELS.length === 9, "투구 위치 선택은 아홉 칸이어야 합니다.");
+  const missMotion = { kind: "swing", start: 1000, outcome: "miss" };
+  const homerMotion = { kind: "swing", start: 1000, outcome: "홈런" };
+  console.assert(batterAnimationFrame(missMotion, 1200) === 3 &&
+    batterAnimationFrame(missMotion, 1450) === 0, "헛스윙은 끝까지 스윙하고 대기 자세로 돌아가야 합니다.");
+  console.assert(batterAnimationFrame(homerMotion, 1110) === 2 &&
+    batterAnimationFrame(homerMotion, 1510) === 2 &&
+    batterAnimationFrame(homerMotion, 1690) === 3, "홈런 타격 자세는 약 0.5초 유지되어야 합니다.");
   const baseCollision = planAutomaticOutfieldPlay([true, true, false], 3,
     { fieldX: 705, fieldY: 212, fielderIndex: 6, label: "우익수" }, 0, 2803);
   const safeSurvivors = baseCollision.play.runners.filter(runner => !runner.out && runner.node > 0 && runner.node < 4);
