@@ -74,7 +74,8 @@ const backgroundMusic = new Audio();
 backgroundMusic.loop = true; backgroundMusic.volume = .24;
 // Supplied tracks are full-length songs; the 177s intro loops on Home, while
 // the 63s celebration plays once on victory only. Never layer with game BGM.
-const HOME_TRACK = "assets/music/little-devils-playbook.mp3";
+// The uploaded Little Devils\' Playbook is byte-for-byte identical to the committed level 6 track.
+const HOME_TRACK = "assets/music/level-6-devils.mp3";
 const VICTORY_TRACK = "assets/music/home-run-celebration.mp3";
 const homeMusic = new Audio(HOME_TRACK), victoryMusic = new Audio(VICTORY_TRACK);
 homeMusic.loop = true; homeMusic.volume = .20;
@@ -92,7 +93,7 @@ function playPageMusic(screen, fresh = false) {
     homeMusic.play().catch(() => { homeAutoplayBlocked = true; });
   } else if (screen === "result" && state.lastGameWon) {
     if (fresh) victoryMusic.currentTime = 0;
-    victoryMusic.play().catch(() => { /* browser may block autoplay until a tap */ });
+    victoryMusic.play().catch(error => { console.warn("승리 음악 재생 실패: MP3 파일 경로 또는 모바일 브라우저 정책을 확인하세요.", error); });
   }
 }
 // Mobile Chrome may block sound before the first gesture. Retry on the first
