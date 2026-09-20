@@ -58,7 +58,7 @@ configureField("easy");
 const state = {
   screen: "home", character: 0, level: 0, unlocked: 1, score: 0, outs: 0, bases: [false, false, false],
   homeRuns: 0, phase: "idle", pitch: null, flight: null, paused: false, pauseStarted: null, resumeAction: null,
-  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, contact: null, effectToken: 0
+  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, contact: null, lastGameWon: false, effectToken: 0
 };
 const BGM_TRACKS = [
   "assets/music/level-1-sunny.mp3", "assets/music/level-2-sunny.mp3", "assets/music/level-3-sunset.mp3",
@@ -70,7 +70,35 @@ const SFX_TRACKS = {
 };
 const backgroundMusic = new Audio();
 backgroundMusic.loop = true; backgroundMusic.volume = .24;
-let backgroundLevel = null;
+// Supplied tracks are full-length songs; the 177s intro loops on Home, while
+// the 63s celebration plays once on victory only. Never layer with game BGM.
+const HOME_TRACK = "assets/music/little-devils-playbook.mp3";
+const VICTORY_TRACK = "assets/music/home-run-celebration.mp3";
+const homeMusic = new Audio(HOME_TRACK), victoryMusic = new Audio(VICTORY_TRACK);
+homeMusic.loop = true; homeMusic.volume = .20;
+victoryMusic.loop = false; victoryMusic.volume = .29;
+let backgroundLevel = null, homeIntroPausedByUser = false;
+
+function stopPageMusic() {
+  for (const audio of [homeMusic, victoryMusic]) { audio.pause(); audio.currentTime = 0; }
+}
+function updateIntroButton() {
+  $("introMusicButton").textContent = !homeMusic.paused && !state.muted ?
+    "Ⅱ 인트로 음악 잠시 멈춤" : "♪ 인트로 음악 듣기";
+  $("introMusicButton").setAttribute("aria-label", !homeMusic.paused && !state.muted ?
+    "인트로 음악 일시정지" : "인트로 음악 재생");
+}
+function playPageMusic(screen, fresh = false) {
+  stopPageMusic();
+  if (state.muted) { updateIntroButton(); return; }
+  if (screen === "home" && !homeIntroPausedByUser) {
+    homeMusic.play().then(updateIntroButton).catch(updateIntroButton);
+  } else if (screen === "result" && state.lastGameWon) {
+    if (fresh) victoryMusic.currentTime = 0;
+    victoryMusic.play().catch(() => { /* browser can require a user gesture or the asset may not be present */ });
+  }
+  updateIntroButton();
+}
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("gameCanvas");
@@ -85,12 +113,16 @@ function saveProgress() {
 }
 
 function showScreen(name) {
+  const previousScreen = state.screen;
   state.screen = name;
   if (name !== "game") stopBackgroundMusic();
   if (name !== "game") $("pitchGauge").hidden = true;
+  if (name === "home" && previousScreen !== "home") homeIntroPausedByUser = false;
+  if (name !== "home") homeIntroPausedByUser = false;
   document.querySelectorAll(".screen").forEach((screen) => screen.classList.toggle("active", screen.id === `${name}Screen`));
   if (name === "character") renderCharacters();
   if (name === "level") renderLevels();
+  playPageMusic(name, name !== previousScreen);
 }
 
 function renderCharacters() {
@@ -614,10 +646,13 @@ function continuePlay(delay) {
 }
 
 function endGame(won) {
-  state.phase = "idle"; state.token += 1;
+  state.phase = "idle"; state.token += 1; state.lastGameWon = won;
   if (won) { state.unlocked = Math.max(state.unlocked, Math.min(levels.length, state.level + 2)); saveProgress(); }
   $("resultBadge").textContent = won ? "★" : "↻"; $("resultTitle").textContent = won ? "참 잘했어요!" : "다시 해볼까요?";
   $("resultArt").src = won ? "assets/09-result-win.png" : "assets/10-result-encouragement.png";
+  $("resultArt").alt = won ? "승리를 축하하는 꼬마 야구단" : "다시 도전하는 꼬마 야구단";
+  $("resultScreen").classList.toggle("won", won);
+  $("resultScreen").classList.toggle("lost", !won);
   const pitching = state.mode === "pitching";
   $("resultCopy").textContent = pitching ? `3아웃을 잡았어요. 실점은 ${state.runsAllowed}점이에요.` : won ? `${levels[state.level].target}점 목표를 달성했어요.` : "아웃 3번이 되었어요. 다음에는 더 늦게 눌러 보세요.";
   $("resultScoreLabel").textContent = pitching ? "실점" : "점수"; $("resultHomeRunsLabel").textContent = pitching ? "아웃" : "홈런";
@@ -1122,7 +1157,24 @@ $("pauseButton").addEventListener("click", () => togglePause(true)); $("closePau
 $("quitButton").addEventListener("click", () => { state.token += 1; state.phase = "idle"; togglePause(false); showScreen("level"); });
 $("resultRetry").addEventListener("click", () => startGame(state.level));
 $("resultPrimary").addEventListener("click", () => state.level + 1 < levels.length && state.level + 1 < state.unlocked ? startGame(state.level + 1) : showScreen("home"));
-$("soundToggle").addEventListener("click", () => { state.muted = !state.muted; if (state.muted) backgroundMusic.pause(); else if (state.screen === "game" && !state.paused) playBackgroundMusic(state.level); $("soundToggle").textContent = state.muted ? "🔇" : "🔊"; $("soundToggle").setAttribute("aria-label", state.muted ? "소리 켜기" : "소리 끄기"); });
+$("introMusicButton").addEventListener("click", () => {
+  if (state.screen !== "home") return;
+  if (state.muted) { state.muted = false; $("soundToggle").textContent = "🔊"; $("soundToggle").setAttribute("aria-label", "소리 끄기"); }
+  if (!homeMusic.paused) { homeIntroPausedByUser = true; homeMusic.pause(); updateIntroButton(); }
+  else { homeIntroPausedByUser = false; homeMusic.play().then(updateIntroButton).catch(updateIntroButton); }
+});
+$("soundToggle").addEventListener("click", () => {
+  state.muted = !state.muted;
+  $("soundToggle").textContent = state.muted ? "🔇" : "🔊";
+  $("soundToggle").setAttribute("aria-label", state.muted ? "소리 켜기" : "소리 끄기");
+  if (state.muted) {
+    backgroundMusic.pause(); stopPageMusic(); updateIntroButton();
+  } else if (state.screen === "game" && !state.paused) {
+    playBackgroundMusic(state.level);
+  } else if (state.screen === "home" || state.screen === "result") {
+    playPageMusic(state.screen);
+  }
+});
 document.addEventListener("keydown", (event) => { if ((event.code === "Space" || event.code === "Enter") && state.screen === "game") { event.preventDefault(); swing(); } if (event.code === "Escape" && state.screen === "game") togglePause(!state.paused); });
 
 function runSelfCheck() {
@@ -1203,4 +1255,4 @@ function runSelfCheck() {
   state.flight = savedFlightForBounce;
 }
 
-loadProgress(); renderCharacters(); renderLevels(); runSelfCheck(); updateHud(); requestAnimationFrame(draw);
+loadProgress(); renderCharacters(); renderLevels(); runSelfCheck(); updateHud(); playPageMusic("home", true); requestAnimationFrame(draw);
