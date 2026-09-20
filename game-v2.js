@@ -1206,8 +1206,26 @@ $("pitchTargets").addEventListener("click", (event) => {
 $("swingButton").addEventListener("click", swing); canvas.addEventListener("click", swing);
 $("pauseButton").addEventListener("click", () => togglePause(true)); $("closePause").addEventListener("click", () => togglePause(false)); $("resumeButton").addEventListener("click", () => togglePause(false));
 $("quitButton").addEventListener("click", () => { state.token += 1; state.phase = "idle"; togglePause(false); showScreen("level"); });
-$("resultRetry").addEventListener("click", () => startGame(state.level));
-$("resultPrimary").addEventListener("click", () => state.level + 1 < levels.length && state.level + 1 < state.unlocked ? startGame(state.level + 1) : showScreen("home"));
+// The result screen stays visible behind one short quiz; an incorrect answer
+// never blocks the child's next game. Leaving for Home needs no quiz.
+function startReplayQuiz(nextGame) {
+  if (state.screen !== "result") return;
+  window.BaseballQuiz.open(nextGame);
+}
+$("resultRetry").addEventListener("click", () => startReplayQuiz(() => startGame(state.level)));
+$("resultPrimary").addEventListener("click", () => {
+  const nextLevel = state.level + 1;
+  if (state.lastGameWon && nextLevel < levels.length && nextLevel < state.unlocked) {
+    startReplayQuiz(() => startGame(nextLevel));
+  } else {
+    showScreen("home");
+  }
+});
+window.BaseballQuizSound = correct => {
+  if (state.muted) return;
+  playSound(correct ? "safe" : "strike");
+};
+window.BaseballQuiz.init();
 document.addEventListener("pointerdown", unlockHomeAudio, { passive: true });
 document.addEventListener("touchstart", unlockHomeAudio, { passive: true });
 document.addEventListener("keydown", unlockHomeAudio);
