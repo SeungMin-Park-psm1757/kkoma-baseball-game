@@ -74,8 +74,13 @@
         <div id="pitchGauge" class="pitch-gauge" hidden aria-label="투구 타이밍 게이지"><span id="pitchNeedle"></span><b>좋아요!</b></div>
         <div id="playEffect" class="play-effect" role="status" aria-live="assertive"></div>
       </div>
-      <div class="game-controls">
+      <div id="gameControls" class="game-controls">
         <p id="gameMessage" class="game-message" aria-live="assertive">준비되면 공이 날아와요.</p>
+        <div id="pitchLocation" class="pitch-location" hidden aria-label="투구 목표 선택">
+          <strong>어디로 던질까요?</strong>
+          <div id="pitchTargets" class="pitch-targets" role="group" aria-label="아홉 칸 중 원하는 투구 위치를 선택하세요"></div>
+          <small>칸을 고른 뒤 던지기!</small>
+        </div>
         <div class="bases" aria-label="베이스 상황">
           <span id="base3" class="base">3루</span><span id="base2" class="base">2루</span><span id="base1" class="base">1루</span>
         </div>
