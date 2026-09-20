@@ -1311,6 +1311,16 @@ function runSelfCheck() {
     { fielderIndex: 6, fieldX: 705, fieldY: 212, label: "우익수" }, 0, 2100);
   console.assert(dynamic.play.dynamic && dynamic.play.runners.length === 1, "타격 후 주자별 자동 판단이 구성되어야 합니다.");
   console.assert(dynamic.action === null || dynamic.action.legs.every(leg => leg.node >= 1 && leg.node <= 3), "송구는 실제 베이스를 향해야 합니다.");
+  const midOutfield = { fieldX: BASE_PATH[2].x, fieldY: BASE_PATH[2].y + 18,
+    fielderIndex: 5, label: "중견수" };
+  const earlyField = planAutomaticOutfieldPlay([true, false, false], 1, midOutfield, 0, 700);
+  const lateField = planAutomaticOutfieldPlay([true, false, false], 1, midOutfield, 0, 1150);
+  console.assert(earlyField.action?.legs[0]?.node === 2 &&
+    earlyField.action?.legs[1]?.node === 1,
+    "2루 선행주자를 잡을 수 있을 때는 2루 송구 후 1루 중계를 우선해야 합니다.");
+  console.assert(lateField.action?.legs[0]?.node === 1 &&
+    lateField.play.runners[0].node === 2 && !lateField.play.runners[0].out,
+    "2루 주자가 이미 안전할 때는 늦은 2루 송구 대신 1루 아웃을 노려야 합니다.");
   for (let sample = 0; sample < 20; sample += 1) {
     const scenario = planAutomaticOutfieldPlay(
       [Boolean(sample & 1), Boolean(sample & 2), Boolean(sample & 4)], 1 + sample % 3,
