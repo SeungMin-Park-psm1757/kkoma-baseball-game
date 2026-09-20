@@ -81,25 +81,45 @@ const homeMusic = new Audio(HOME_TRACK), victoryMusic = new Audio(VICTORY_TRACK)
 homeMusic.loop = true; homeMusic.volume = .20;
 victoryMusic.loop = false; victoryMusic.volume = .29;
 let backgroundLevel = null, homeAutoplayBlocked = false;
+const PRE_GAME_SCREENS = new Set(["home", "character", "level"]);
 
 function stopPageMusic() {
   for (const audio of [homeMusic, victoryMusic]) { audio.pause(); audio.currentTime = 0; }
 }
+
 function playPageMusic(screen, fresh = false) {
-  stopPageMusic();
-  if (state.muted) return;
-  if (screen === "home") {
-    homeAutoplayBlocked = false;
-    homeMusic.play().catch(() => { homeAutoplayBlocked = true; });
-  } else if (screen === "result" && state.lastGameWon) {
+  if (PRE_GAME_SCREENS.has(screen)) {
+    // Keep the same playback position across Home → character → stadium
+    // and when navigating backward. No stop/seek/play between those screens.
+    victoryMusic.pause();
+    victoryMusic.currentTime = 0;
+    if (state.muted) { homeMusic.pause(); return; }
+    if (homeMusic.paused) {
+      homeAutoplayBlocked = false;
+      homeMusic.play().catch(() => { homeAutoplayBlocked = true; });
+    }
+    return;
+  }
+  // Beginning the actual match (or opening results) is the only time the
+  // pre-game introduction is stopped and rewound.
+  homeMusic.pause();
+  homeMusic.currentTime = 0;
+  homeAutoplayBlocked = false;
+  if (screen === "result" && state.lastGameWon && !state.muted) {
     if (fresh) victoryMusic.currentTime = 0;
-    victoryMusic.play().catch(error => { console.warn("승리 음악 재생 실패: MP3 파일 경로 또는 모바일 브라우저 정책을 확인하세요.", error); });
+    victoryMusic.play().catch(error => {
+      console.warn("승리 음악 재생 실패: MP3 파일 경로 또는 모바일 브라우저 정책을 확인하세요.", error);
+    });
+  } else {
+    victoryMusic.pause();
+    victoryMusic.currentTime = 0;
   }
 }
-// Mobile Chrome may block sound before the first gesture. Retry on the first
-// normal touch/click/key event, without requiring a separate music control.
+
+// Some mobile browsers block unprompted audio. The child's first normal
+// interaction on any pre-game screen may unlock the same continuous intro.
 function unlockHomeAudio() {
-  if (state.screen !== "home" || state.muted || !homeMusic.paused) return;
+  if (!PRE_GAME_SCREENS.has(state.screen) || state.muted || !homeMusic.paused) return;
   homeAutoplayBlocked = false;
   homeMusic.play().catch(() => { homeAutoplayBlocked = true; });
 }
@@ -1251,7 +1271,7 @@ $("soundToggle").addEventListener("click", () => {
     backgroundMusic.pause(); stopPageMusic();
   } else if (state.screen === "game" && !state.paused) {
     playBackgroundMusic(state.level);
-  } else if (state.screen === "home" || state.screen === "result") {
+  } else if (PRE_GAME_SCREENS.has(state.screen) || state.screen === "result") {
     playPageMusic(state.screen);
   }
 });
@@ -1342,6 +1362,9 @@ function runSelfCheck() {
   console.assert(BGM_TRACKS.length === levels.length && BGM_TRACKS.every((track) => track.endsWith(".mp3")), "각 레벨에는 한 개의 배경음이 배정되어야 합니다.");
   console.assert(HOME_TRACK === BGM_TRACKS[5] && homeMusic.loop,
     "인트로 음악은 검증된 기존 6레벨 곡을 반복 재생해야 합니다.");
+  console.assert(["home", "character", "level"].every(name => PRE_GAME_SCREENS.has(name)) &&
+    !PRE_GAME_SCREENS.has("game") && !PRE_GAME_SCREENS.has("result"),
+    "홈·캐릭터·경기장 선택 화면은 하나의 연속 인트로 음악 구간이어야 합니다.");
   console.assert(VICTORY_TRACK === "assets/music/home-run-celebration.mp3" && !victoryMusic.loop,
     "승리 음악은 제공된 MP3의 GitHub 업로드 경로를 1회만 재생해야 합니다.");
   console.assert(Object.keys(SFX_TRACKS).length === 6 && Object.values(SFX_TRACKS).every((track) => track.endsWith(".mp3")), "여섯 가지 플레이 효과음이 있어야 합니다.");
