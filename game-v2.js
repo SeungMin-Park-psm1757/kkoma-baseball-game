@@ -553,7 +553,7 @@ function finishFlight() {
     state.fieldAction = race.action; playEffectSound("glove"); setMessage(`${BASE_PATH[race.action.targetNode].label}에서 승부해요!`); tone(120, .16); continuePlay(finalAt - now + 850); return;
   }
   if (caught) {
-    state.runningPlay = null; state.fieldAction = { kind: "catch", start: now, target }; state.outs += 1; setMessage(`${target.label}가 잡았어요! 플라이 아웃!`); showEffect("플라이 아웃!", "out"); playEffectSound("glove"); setTimeout(() => playEffectSound("out"), 120); updateHud(); continuePlay(1450); return;
+    state.runningPlay = null; state.fieldAction = { kind: "catch", start: now, target }; state.outs += 1; setMessage(`${target.label}가 땅에 닿기 전에 잡았어요! 플라이 아웃!`); showEffect("플라이 아웃!", "out"); playEffectSound("glove"); setTimeout(() => playEffectSound("out"), 120); updateHud(); continuePlay(1450); return;
   }
   const distance = hitDistance(type);
   if (type === "홈런") {
@@ -722,7 +722,13 @@ function draw() {
       pitchY + (end.y - pitchY) * progress, 7 + progress * 5);
     if (progress >= 1 && !state.paused) { if (state.mode === "pitching") finishPitch(); else resolveStrike("조금 늦었어요"); }
   } else if (state.phase === "flight" && state.flight) {
-    const point = flightPoint(flightProgress); drawBall(point.x, point.y, Math.max(6, 11 - flightProgress * 4)); if (flightProgress >= 1 && !state.paused) finishFlight();
+    const point = flightPoint(flightProgress);
+    if (!state.flight.caught && !state.flight.bounced && flightProgress >= state.flight.bounceProgress && !state.paused) {
+      state.flight.bounced = true; tone(150, .035);
+    }
+    if (!state.flight.caught) drawBallShadow(point.groundX, point.groundY, point.height);
+    drawBall(point.x, point.y, Math.max(6, 11 - flightProgress * 4));
+    if (flightProgress >= 1 && !state.paused) finishFlight();
   } else if (state.phase === "foul" && state.foul) {
     const progress = Math.min(1, (now - state.foul.start) / 520); drawFoulTrajectory(); const point = foulPoint(progress); drawBall(point.x, point.y, 8);
   }
@@ -901,10 +907,35 @@ function drawGroundShadow(x, y, radius, opacity) {
   ctx.save(); ctx.fillStyle = `rgba(16,35,63,${opacity})`; ctx.beginPath(); ctx.ellipse(x, y, radius, Math.max(3, radius * .24), 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
 }
 
+function bounceGroundPoint(flight) {
+  const t = flight.bounceProgress;
+  return { x: CONTACT.x + (flight.target.ballX - CONTACT.x) * t,
+    y: CONTACT.y + (flight.target.ballY - CONTACT.y) * t };
+}
+
 function flightPoint(progress) {
-  const start = CONTACT, target = state.flight.target, grounder = state.flight.type === "땅볼", homer = state.flight.type === "홈런";
-  const control = { x: (start.x + target.ballX) / 2, y: grounder ? Math.max(target.ballY, start.y - 28) : homer ? Math.max(18, target.ballY - 92) : Math.min(start.y, target.ballY) - 115 }, inverse = 1 - progress;
-  return { x: inverse * inverse * start.x + 2 * inverse * progress * control.x + progress * progress * target.ballX, y: inverse * inverse * start.y + 2 * inverse * progress * control.y + progress * progress * target.ballY };
+  const flight = state.flight, p = clamp(progress, 0, 1), end = flight.target;
+  const groundX = CONTACT.x + (end.ballX - CONTACT.x) * p;
+  const groundY = CONTACT.y + (end.ballY - CONTACT.y) * p;
+  const t = flight.bounceProgress;
+  const height = flight.grounder ? 19 : flight.contact.shape === "높은 뜬공" ? 164 :
+    flight.contact.shape === "뜬공" ? 123 : flight.contact.shape === "강한 직선타" ? 88 : 55;
+  let airborne = 0;
+  if (flight.caught) airborne = Math.sin(Math.PI * p) * height;
+  else if (p < t) airborne = Math.sin(Math.PI * p / t) * height;
+  else {
+    const second = (p - t) / (1 - t);
+    const rollOff = clamp(second / .45, 0, 1);
+    const hop = flight.grounder ? 12 : 28;
+    airborne = second < .45 ? Math.sin(Math.PI * rollOff) * hop : 0;
+  }
+  return { x: groundX, y: groundY - airborne, groundX, groundY, height: airborne };
+}
+
+function drawBallShadow(x, y, height) {
+  ctx.save(); ctx.fillStyle = `rgba(16,35,63,${.1 + .11 * (1 - clamp(height / 150, 0, 1))})`;
+  ctx.beginPath(); ctx.ellipse(x, y + 4, 7 + height * .04, 3, 0, 0, Math.PI * 2);
+  ctx.fill(); ctx.restore();
 }
 
 function foulPoint(progress) {
@@ -917,12 +948,24 @@ function drawFoulTrajectory() {
 }
 
 function drawTrajectory() {
-  const start = CONTACT, target = state.flight.target, grounder = state.flight.type === "땅볼", homer = state.flight.type === "홈런";
-  const control = { x: (start.x + target.ballX) / 2, y: grounder ? Math.max(target.ballY, start.y - 28) : homer ? Math.max(18, target.ballY - 92) : Math.min(start.y, target.ballY) - 115 };
-  drawDashedPath(start, control, target, "rgba(255,247,136,.7)");
-  if (!homer) {
-    ctx.save(); ctx.fillStyle = "rgba(255,201,74,.3)"; ctx.strokeStyle = "rgba(242,106,61,.75)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(target.fieldX, target.fieldY, 24, 9, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.restore();
-    drawTag(target.label, target.fieldX, target.fieldY - 18, "#10233f");
+  const flight = state.flight, target = flight.target;
+  ctx.save();
+  ctx.strokeStyle = flight.caught ? "rgba(255,249,200,.7)" : "rgba(255,247,136,.75)";
+  ctx.lineWidth = 3; ctx.setLineDash([7, 10]);
+  ctx.beginPath();
+  for (let step = 0; step <= 24; step += 1) {
+    const point = flightPoint(step / 24);
+    if (step === 0) ctx.moveTo(point.x, point.y); else ctx.lineTo(point.x, point.y);
+  }
+  ctx.stroke(); ctx.restore();
+  if (flight.caught) {
+    drawTag("잡을 수 있을까?", target.fieldX, target.fieldY - 27, "#10233f");
+  } else if (flight.type !== "홈런") {
+    const bounced = bounceGroundPoint(flight);
+    ctx.save(); ctx.strokeStyle = "rgba(242,106,61,.8)"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.ellipse(bounced.x, bounced.y, 15, 5, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    if (flight.bounced) drawTag("통!", bounced.x, bounced.y - 15, "#d34d2a");
+    drawTag(target.label, target.fieldX, target.fieldY - 17, "#10233f");
   } else drawTag("담장 밖!", target.ballX, target.ballY + 32, "#d34d2a");
 }
 
@@ -961,7 +1004,7 @@ function drawFieldingResult(now) {
     const firstLeg = action.legs[0];
     if (now < firstLeg.throwStart) {
       drawGroundShadow(at.x, at.y, 25, .18); drawOpponentFrame(0, at.x, at.y, 66, 82, target.fieldX < fielder.x);
-      drawTag(`${target.label} 포구!`, at.x, at.y + 18, "#10233f"); return;
+      drawTag(`${target.label} 공 확보!`, at.x, at.y + 18, "#10233f"); return;
     }
     const leg = action.legs.find(item => now < item.receive);
     if (!leg) {
@@ -984,8 +1027,9 @@ function drawFieldingResult(now) {
     return;
   }
   if (action.kind === "catch") {
-    drawGroundShadow(at.x, at.y, 25, .18); drawOpponentFrame(elapsed < 520 ? 0 : 4, at.x, at.y, 66, 82, target.fieldX < fielder.x); drawTag(elapsed < 520 ? "포구!" : "내야로 송구!", at.x, at.y + 18, "#10233f");
-    if (elapsed > 520 && elapsed < 1050) drawThrowBall({ x: at.x, y: at.y - 52 }, { x: 480, y: 322 }, (elapsed - 520) / 530); return;
+    drawGroundShadow(at.x, at.y, 25, .18);
+    drawOpponentFrame(0, at.x, at.y, 66, 82, target.fieldX < fielder.x);
+    drawTag("노바운드 포구!", at.x, at.y + 18, "#10233f"); return;
   }
 }
 
