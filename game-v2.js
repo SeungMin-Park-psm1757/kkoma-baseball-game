@@ -1131,6 +1131,11 @@ function runSelfCheck() {
   console.assert(isPitchInZone(centeredPitch), "정중앙을 정확히 겨냥한 공은 스트라이크존에 들어와야 합니다.");
   console.assert(!isPitchInZone({ x: PITCH_ZONE.x - 1, y: centerAim.y }), "존 바깥의 공은 볼이어야 합니다.");
   console.assert(PITCH_AIM_LABELS.length === 9, "투구 위치 선택은 아홉 칸이어야 합니다.");
+  const baseCollision = planAutomaticOutfieldPlay([true, true, false], 3,
+    { fieldX: 705, fieldY: 212, fielderIndex: 6, label: "우익수" }, 0, 2803);
+  const safeSurvivors = baseCollision.play.runners.filter(runner => !runner.out && runner.node > 0 && runner.node < 4);
+  console.assert(new Set(safeSurvivors.map(runner => runner.node)).size === safeSurvivors.length,
+    "앞선 주자가 아직 다음 베이스로 이동 중이면 뒤 주자가 같은 베이스로 진루해서는 안 됩니다.");
   // Deterministic contact/flight checks cover both sides of the bounce-vs-catch boundary.
   const groundSample = generateBattedBall(.02, false, 0, () => 0);
   console.assert(groundSample.grounder && !groundSample.caught && groundSample.bounceProgress < 1,
