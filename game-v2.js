@@ -1340,6 +1340,10 @@ function runSelfCheck() {
   console.assert(levels.map((level) => level.successChance * 10).join(",") === "9,8,7,6,5,4", "타구 성공 목표는 레벨마다 열 번 중 9~4번이어야 합니다.");
   console.assert(battedBallSucceeded(0, () => .89) && !battedBallSucceeded(5, () => .41), "레벨별 타구 성공 판정이 맞아야 합니다.");
   console.assert(BGM_TRACKS.length === levels.length && BGM_TRACKS.every((track) => track.endsWith(".mp3")), "각 레벨에는 한 개의 배경음이 배정되어야 합니다.");
+  console.assert(HOME_TRACK === BGM_TRACKS[5] && homeMusic.loop,
+    "인트로 음악은 검증된 기존 6레벨 곡을 반복 재생해야 합니다.");
+  console.assert(VICTORY_TRACK === "assets/music/home-run-celebration.mp3" && !victoryMusic.loop,
+    "승리 음악은 제공된 MP3의 GitHub 업로드 경로를 1회만 재생해야 합니다.");
   console.assert(Object.keys(SFX_TRACKS).length === 6 && Object.values(SFX_TRACKS).every((track) => track.endsWith(".mp3")), "여섯 가지 플레이 효과음이 있어야 합니다.");
   console.assert(images["minjun-glasses-0"].src.endsWith("minjun-glasses-0.png"), "정우 안경 동작 이미지가 있어야 합니다.");
   const homeRunTarget = chooseFlightTarget("홈런"); console.assert(homeRunTarget.ballY < fieldLayout.fenceY, "홈런 종점은 외야 펜스 너머여야 합니다.");
