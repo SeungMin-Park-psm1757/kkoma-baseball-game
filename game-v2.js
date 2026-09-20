@@ -528,7 +528,11 @@ function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
     if (runner.node >= runner.maxNode) continue;
     const nextNode = runner.node + 1, nextAt = time + runningDuration(1, runner.node, runner.character);
     // The next base must be available and the runner must have a safe margin over the ball.
-    const occupied = runners.some(other => other !== runner && !other.out && !other.moving && other.node === nextNode);
+    const occupied = nextNode < 4 && runners.some(other => other !== runner && !other.out &&
+      ((!other.moving && other.node === nextNode) ||
+        (other.moving && other.nextNode === nextNode && other.arriveAt <= nextAt)));
+    // Reserve the destination for a leading runner who is still on the way there.
+    // Otherwise a trailing runner can depart before the leader stops, causing overlap.
     if (!occupied && nextAt + SAFE_MARGIN_MS < earliestDefenseAt(nextNode, time)) beginLeg(runner, time, nextNode);
   }
 
