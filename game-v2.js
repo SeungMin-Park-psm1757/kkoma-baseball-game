@@ -77,27 +77,28 @@ const VICTORY_TRACK = "assets/music/home-run-celebration.mp3";
 const homeMusic = new Audio(HOME_TRACK), victoryMusic = new Audio(VICTORY_TRACK);
 homeMusic.loop = true; homeMusic.volume = .20;
 victoryMusic.loop = false; victoryMusic.volume = .29;
-let backgroundLevel = null, homeIntroPausedByUser = false;
+let backgroundLevel = null, homeAutoplayBlocked = false;
 
 function stopPageMusic() {
   for (const audio of [homeMusic, victoryMusic]) { audio.pause(); audio.currentTime = 0; }
 }
-function updateIntroButton() {
-  $("introMusicButton").textContent = !homeMusic.paused && !state.muted ?
-    "Ⅱ 인트로 음악 잠시 멈춤" : "♪ 인트로 음악 듣기";
-  $("introMusicButton").setAttribute("aria-label", !homeMusic.paused && !state.muted ?
-    "인트로 음악 일시정지" : "인트로 음악 재생");
-}
 function playPageMusic(screen, fresh = false) {
   stopPageMusic();
-  if (state.muted) { updateIntroButton(); return; }
-  if (screen === "home" && !homeIntroPausedByUser) {
-    homeMusic.play().then(updateIntroButton).catch(updateIntroButton);
+  if (state.muted) return;
+  if (screen === "home") {
+    homeAutoplayBlocked = false;
+    homeMusic.play().catch(() => { homeAutoplayBlocked = true; });
   } else if (screen === "result" && state.lastGameWon) {
     if (fresh) victoryMusic.currentTime = 0;
-    victoryMusic.play().catch(() => { /* browser can require a user gesture or the asset may not be present */ });
+    victoryMusic.play().catch(() => { /* browser may block autoplay until a tap */ });
   }
-  updateIntroButton();
+}
+// Mobile Chrome may block sound before the first gesture. Retry on the first
+// normal touch/click/key event, without requiring a separate music control.
+function unlockHomeAudio() {
+  if (state.screen !== "home" || state.muted || !homeMusic.paused) return;
+  homeAutoplayBlocked = false;
+  homeMusic.play().catch(() => { homeAutoplayBlocked = true; });
 }
 
 const $ = (id) => document.getElementById(id);
@@ -117,8 +118,6 @@ function showScreen(name) {
   state.screen = name;
   if (name !== "game") stopBackgroundMusic();
   if (name !== "game") $("pitchGauge").hidden = true;
-  if (name === "home" && previousScreen !== "home") homeIntroPausedByUser = false;
-  if (name !== "home") homeIntroPausedByUser = false;
   document.querySelectorAll(".screen").forEach((screen) => screen.classList.toggle("active", screen.id === `${name}Screen`));
   if (name === "character") renderCharacters();
   if (name === "level") renderLevels();
@@ -923,7 +922,7 @@ function drawBaseRunners(now) {
     state.bases.forEach((occupied, index) => {
       if (!occupied) return;
       const base = BASE_PATH[index + 1];
-      drawRunnerIdle(base.x, base.y, index === 2);
+      drawRunnerIdle(base.x, base.y, index === 0 || index === 2);
     });
     return;
   }
@@ -940,7 +939,7 @@ function drawBaseRunners(now) {
     const point = idle ? BASE_PATH[move.endNode] : runningPoint(move, progress);
     if (idle) {
       // Base arrival becomes a settled ready-to-run pose; no running bob or slide.
-      drawRunnerIdle(point.x, point.y, point.flip ?? (move.endNode === 3));
+      drawRunnerIdle(point.x, point.y, move.endNode === 1 || move.endNode === 3);
       continue;
     }
     const name = move.character === 2 ? "tori" : "runner";
@@ -1157,18 +1156,15 @@ $("pauseButton").addEventListener("click", () => togglePause(true)); $("closePau
 $("quitButton").addEventListener("click", () => { state.token += 1; state.phase = "idle"; togglePause(false); showScreen("level"); });
 $("resultRetry").addEventListener("click", () => startGame(state.level));
 $("resultPrimary").addEventListener("click", () => state.level + 1 < levels.length && state.level + 1 < state.unlocked ? startGame(state.level + 1) : showScreen("home"));
-$("introMusicButton").addEventListener("click", () => {
-  if (state.screen !== "home") return;
-  if (state.muted) { state.muted = false; $("soundToggle").textContent = "🔊"; $("soundToggle").setAttribute("aria-label", "소리 끄기"); }
-  if (!homeMusic.paused) { homeIntroPausedByUser = true; homeMusic.pause(); updateIntroButton(); }
-  else { homeIntroPausedByUser = false; homeMusic.play().then(updateIntroButton).catch(updateIntroButton); }
-});
+document.addEventListener("pointerdown", unlockHomeAudio, { passive: true });
+document.addEventListener("touchstart", unlockHomeAudio, { passive: true });
+document.addEventListener("keydown", unlockHomeAudio);
 $("soundToggle").addEventListener("click", () => {
   state.muted = !state.muted;
   $("soundToggle").textContent = state.muted ? "🔇" : "🔊";
   $("soundToggle").setAttribute("aria-label", state.muted ? "소리 켜기" : "소리 끄기");
   if (state.muted) {
-    backgroundMusic.pause(); stopPageMusic(); updateIntroButton();
+    backgroundMusic.pause(); stopPageMusic();
   } else if (state.screen === "game" && !state.paused) {
     playBackgroundMusic(state.level);
   } else if (state.screen === "home" || state.screen === "result") {
