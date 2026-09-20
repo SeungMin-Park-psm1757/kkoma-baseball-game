@@ -376,7 +376,8 @@ function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
     maxNode: Math.min(4, distance), out: false, moving: false, segments: [] });
 
   const events = [], legs = [], stages = [];
-  let ball = { at: fieldedAt, from, pending: null }, outs = 0, runs = 0;
+  let ball = { at: fieldedAt, from, pending: null }, outs = 0;
+  const scoredAt = []; let thirdOutAt = Infinity, thirdOutWasForce = false;
   function enqueue(kind, at, runner = null) { events.push({ kind, at, runner }); }
 
   function beginLeg(runner, at, nextNode) {
@@ -430,17 +431,25 @@ function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
       ball.from = BASE_PATH[leg.node]; ball.at = time + TRANSFER_MS; ball.pending = null;
       const runner = event.runner, tagAt = runner.arriveAt + TAG_MS;
       const out = runner.moving && !runner.out && runner.nextNode === leg.node && time + TAG_MS < runner.arriveAt;
-      if (out) { runner.out = true; outs += 1; runner.segments[runner.segments.length - 1].outAt = tagAt; }
+      if (out) {
+        runner.out = true; outs += 1; runner.segments[runner.segments.length - 1].outAt = tagAt;
+        if (state.outs + outs >= 3 && thirdOutAt === Infinity) {
+          thirdOutAt = tagAt;
+          thirdOutWasForce = runner.id === "batter" && leg.node === 1 ||
+            runner.startNode > 0 && runner.segments.length === 1 &&
+            bases.slice(0, runner.startNode).every(Boolean);
+        }
+      }
       const text = out ? (leg.node === 1 ? "공이 먼저! 1루 아웃!" : `태그 성공! ${BASE_PATH[leg.node].label} 아웃!`) :
         `${BASE_PATH[leg.node].label} 세이프!`;
       stages.push({ at: out ? tagAt : Math.max(time, runner.arriveAt), out, text, fired: false });
-      if (outs < 3) release(ball.at);
+      if (state.outs + outs < 3) release(ball.at);
       continue;
     }
     const runner = event.runner;
     if (runner.out) continue;
     runner.moving = false; runner.node = runner.nextNode;
-    if (runner.node === 4) { runs += 1; continue; }
+    if (runner.node === 4) { scoredAt.push(time); continue; }
     if (runner.node >= runner.maxNode) continue;
     const nextNode = runner.node + 1, nextAt = time + runningDuration(1, runner.node, runner.character);
     // The next base must be available and the runner must have a safe margin over the ball.
@@ -448,6 +457,7 @@ function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
     if (!occupied && nextAt + SAFE_MARGIN_MS < earliestDefenseAt(nextNode, time)) beginLeg(runner, time, nextNode);
   }
 
+  const runs = thirdOutWasForce ? 0 : scoredAt.filter(time => time < thirdOutAt).length;
   const moves = runners.flatMap(runner => runner.segments);
   const next = [false, false, false];
   for (const runner of runners) if (!runner.out && runner.node >= 1 && runner.node <= 3) next[runner.node - 1] = true;
@@ -972,6 +982,17 @@ function runSelfCheck() {
     { fielderIndex: 6, fieldX: 705, fieldY: 212, label: "우익수" }, 0, 2100);
   console.assert(dynamic.play.dynamic && dynamic.play.runners.length === 1, "타격 후 주자별 자동 판단이 구성되어야 합니다.");
   console.assert(dynamic.action === null || dynamic.action.legs.every(leg => leg.node >= 1 && leg.node <= 3), "송구는 실제 베이스를 향해야 합니다.");
+  for (let sample = 0; sample < 20; sample += 1) {
+    const scenario = planAutomaticOutfieldPlay(
+      [Boolean(sample & 1), Boolean(sample & 2), Boolean(sample & 4)], 1 + sample % 3,
+      { fielderIndex: 6, fieldX: 705, fieldY: 212, label: "우익수" }, 0, 650 + sample * 135);
+    const alive = scenario.play.runners.filter(runner => !runner.out && runner.node >= 1 && runner.node <= 3);
+    const occupied = new Set(alive.map(runner => runner.node));
+    console.assert(occupied.size === alive.length, "두 주자가 같은 베이스에 정지해서는 안 됩니다.");
+    console.assert(!scenario.action || scenario.action.legs.every((leg, index, legs) =>
+      leg.node >= 1 && leg.node <= 3 && leg.receive > leg.throwStart &&
+      (index === 0 || leg.throwStart >= legs[index - 1].receive)), "순차 송구는 공을 확보한 뒤에만 시작해야 합니다.");
+  }
   console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 곧바로 판단한 베이스에 송구해야 합니다.");
   result = buildRunningPlay([false, false, false], 1); console.assert(result.bases[0] && !result.bases[1] && !result.bases[2], "일반 단타의 타자주자는 1루에서 멈춰야 합니다.");
   console.assert(flightDuration("단타", true) === 1833 && flightDuration("단타", false) === 673, "타구 체공 시간은 세이프·아웃 난이도에 맞아야 합니다.");
