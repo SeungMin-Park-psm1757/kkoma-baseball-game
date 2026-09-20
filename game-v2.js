@@ -7,8 +7,10 @@ const levels = [
   { name: "챔피언 경기장", target: 10, pitchMs: 1250, window: .16, successChance: .4, hitFlightScale: 2.15, doublePlayChance: .38, foulChance: .16, type: "빠른 공 + 장애물", background: "hard", color: "#f28b7a" }
 ];
 const RUNNER_SPEED_MULTIPLIER = 1.05;
-// A 2% longer defensive throw helps the child in batting mode without changing runner speed or pitching difficulty.
-const BATTING_DEFENSE_TIME_FACTOR = 1.02;
+// Extra child-friendly assistance applies only to the batter's run to first base.
+const BATTER_FIRST_BASE_SPEED_BOOST = 1.025;
+// A second 2% defensive time adjustment: 1.02 × 1.02 = 1.0404 relative to the baseline.
+const BATTING_DEFENSE_TIME_FACTOR = 1.02 * 1.02;
 
 const characters = [
   { name: "정우", asset: "assets/02-character-minjun-power-glasses.png", motion: "minjun-glasses", role: "힘껏 치는 친구", detail: "홈런 타이밍이 조금 더 넓어요.", bonus: .025, runnerSpeed: 1, tag: "파워형" },
@@ -448,15 +450,21 @@ function buildGroundRace(now, target) {
   const targetNode = forcedCount + 1, destination = BASE_PATH[targetNode];
   const fieldingDelay = 360 - state.level * 28;
   const firstThrowStart = now + fieldingDelay, firstReceive = firstThrowStart + defensiveThrowDuration({ x: target.fieldX, y: target.fieldY }, destination);
-  const runnerArrival = state.flight.start + runningDuration(1), leadOut = firstReceive < runnerArrival;
+  // The first throw can target a *different runner* from the batter.
+  // Compare the lead runner with its own actual arrival; compare the relay with
+  // the batter's separately calculated first-base arrival.
+  const batterArrival = state.flight.start + runningDuration(1, 0, state.character);
+  const leadArrival = targetNode === 1 ? batterArrival :
+    state.flight.start + runningDuration(1, targetNode - 1, null);
+  const leadOut = firstReceive < leadArrival;
   const relay = targetNode > 1 && leadOut && state.outs + 1 < 3 && Math.random() < levels[state.level].doublePlayChance;
   const secondThrowStart = firstReceive + 150, secondReceive = relay ? secondThrowStart + defensiveThrowDuration(destination, BASE_PATH[1]) : null;
-  const batterOut = targetNode === 1 ? leadOut : relay && secondReceive < runnerArrival;
+  const batterOut = targetNode === 1 ? leadOut : relay && secondReceive < batterArrival;
   const result = buildGroundResult(state.bases, targetNode, leadOut, batterOut, state.character);
   const firstLabel = BASE_PATH[targetNode].label, stages = [{ at: firstReceive, out: leadOut, text: leadOut ? `${firstLabel} 포스 아웃!` : `${firstLabel} 세이프!`, fired: false }];
   if (relay) stages.push({ at: secondReceive, out: batterOut, text: batterOut ? "1루도 아웃!" : "1루 세이프!", fired: false });
   result.moves.forEach((move) => { if (move.out) move.outAt = move.role === "batter" && relay ? secondReceive : firstReceive; });
-  return { result, action: { kind: "groundRace", start: now, target, targetNode, firstThrowStart, firstReceive, secondThrowStart, secondReceive, relay, firstThrowPlayed: false, secondThrowPlayed: false, stages }, runnerArrival };
+  return { result, action: { kind: "groundRace", start: now, target, targetNode, firstThrowStart, firstReceive, secondThrowStart, secondReceive, relay, firstThrowPlayed: false, secondThrowPlayed: false, stages }, runnerArrival: leadArrival, batterArrival };
 }
 
 function defensiveThrowDuration(from, to) {
@@ -586,7 +594,11 @@ function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
 function runningDuration(distance, startNode = 0, character = state.character) {
   if (distance <= 0) return 0;
   const speedFactor = character === null ? 1 : characters[character].runnerSpeed;
-  return pathLength(startNode, Math.min(4, startNode + distance)) / .25 * speedFactor / RUNNER_SPEED_MULTIPLIER;
+  const baseTime = pathLength(startNode, Math.min(4, startNode + distance)) / .25 * speedFactor / RUNNER_SPEED_MULTIPLIER;
+  if (state.mode !== "batting" || startNode !== 0 || character === null) return baseTime;
+  // Apply the same shorter first-base leg to animations and every out/safe test.
+  const unassistedFirstLeg = pathLength(0, 1) / .25 * speedFactor / RUNNER_SPEED_MULTIPLIER;
+  return baseTime - unassistedFirstLeg * (1 - 1 / BATTER_FIRST_BASE_SPEED_BOOST);
 }
 
 function finishFlight() {
@@ -960,7 +972,8 @@ function runnerVisualState(move, now, start, finalLeg = true) {
   const progress = duration ? Math.max(0, Math.min(1, elapsed / duration)) : 1;
   if (move.endNode === 4 && now > start + duration + 220) return null;
   return { move, elapsed, progress, idle: progress >= 1,
-    slide: finalLeg && move.endNode < 4 && !move.out && !move.outAt && progress >= .94 && progress < 1 };
+    slide: finalLeg && move.endNode < 4 && !move.out && !move.outAt &&
+      progress >= (move.startNode === 0 && move.endNode === 1 ? .90 : .94) && progress < 1 };
 }
 
 function drawRunnerIdle(x, y, flip = false) {
@@ -1267,9 +1280,33 @@ function runSelfCheck() {
   state.mode = "pitching";
   const originalThrow = defensiveThrowDuration(BASE_PATH[1], BASE_PATH[2]);
   state.mode = savedMode;
-  console.assert(slowerThrow >= Math.round(originalThrow * 1.018) &&
-    slowerThrow <= Math.round(originalThrow * 1.022),
-    "타격 모드의 수비 송구만 약 2% 느려져야 합니다.");
+  console.assert(slowerThrow >= Math.round(originalThrow * 1.038) &&
+    slowerThrow <= Math.round(originalThrow * 1.042),
+    "기본 대비 수비 송구가 누적 약 4.04% 느려지고 투수 모드는 유지되어야 합니다.");
+  state.mode = "batting";
+  const assistedFirst = runningDuration(1, 0, 0);
+  const priorFirst = pathLength(0, 1) / .25 / RUNNER_SPEED_MULTIPLIER;
+  console.assert(Math.abs(assistedFirst * BATTER_FIRST_BASE_SPEED_BOOST - priorFirst) < .001,
+    "타자주자의 1루 도착 시간은 약 2.44% 단축되어야 합니다.");
+  console.assert(Math.abs(runningDuration(1, 1, null) -
+    pathLength(1, 2) / .25 / RUNNER_SPEED_MULTIPLIER) < .001,
+    "기존 1루 주자의 2루 진루 속도는 변경되지 않아야 합니다.");
+  const firstBaseSlide = runnerVisualState({ startNode: 0, endNode: 1,
+    character: 0, duration: assistedFirst }, assistedFirst * .92, 0);
+  console.assert(firstBaseSlide.slide && runnerVisualState({ startNode: 0, endNode: 1,
+    character: 0, duration: assistedFirst }, assistedFirst, 0).idle,
+    "1루 직전 슬라이딩은 먼저 시작하지만 도착 시 즉시 멈춰야 합니다.");
+  const savedFlightForGround = state.flight;
+  const savedBasesForGround = state.bases, savedOutsForGround = state.outs;
+  state.flight = { start: 0 }; state.bases = [true, false, false]; state.outs = 0;
+  const groundNearSecond = buildGroundRace(0,
+    { fieldX: BASE_PATH[2].x, fieldY: BASE_PATH[2].y, fielderIndex: 2, label: "2루수" });
+  console.assert(groundNearSecond.action.targetNode === 2 &&
+    groundNearSecond.runnerArrival === runningDuration(1, 1, null) &&
+    groundNearSecond.batterArrival === runningDuration(1, 0, state.character),
+    "2루 포스아웃 판단에는 선행주자 도착 시간, 1루 병살에는 타자 도착 시간을 각각 사용해야 합니다.");
+  state.flight = savedFlightForGround; state.bases = savedBasesForGround; state.outs = savedOutsForGround;
+  state.mode = savedMode;
   const dynamic = planAutomaticOutfieldPlay([false, false, false], 2,
     { fielderIndex: 6, fieldX: 705, fieldY: 212, label: "우익수" }, 0, 2100);
   console.assert(dynamic.play.dynamic && dynamic.play.runners.length === 1, "타격 후 주자별 자동 판단이 구성되어야 합니다.");
