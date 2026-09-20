@@ -7,8 +7,10 @@ const levels = [
   { name: "챔피언 경기장", target: 10, pitchMs: 1250, window: .16, successChance: .4, hitFlightScale: 2.15, doublePlayChance: .38, foulChance: .16, type: "빠른 공 + 장애물", background: "hard", color: "#f28b7a" }
 ];
 const RUNNER_SPEED_MULTIPLIER = 1.05;
-// A 2% longer defensive throw helps the child in batting mode without changing runner speed or pitching difficulty.
-const BATTING_DEFENSE_TIME_FACTOR = 1.02;
+// Extra child-friendly assistance applies only to the batter's run to first base.
+const BATTER_FIRST_BASE_SPEED_BOOST = 1.025;
+// A second 2% defensive time adjustment: 1.02 × 1.02 = 1.0404 relative to the baseline.
+const BATTING_DEFENSE_TIME_FACTOR = 1.02 * 1.02;
 
 const characters = [
   { name: "정우", asset: "assets/02-character-minjun-power-glasses.png", motion: "minjun-glasses", role: "힘껏 치는 친구", detail: "홈런 타이밍이 조금 더 넓어요.", bonus: .025, runnerSpeed: 1, tag: "파워형" },
@@ -58,7 +60,7 @@ configureField("easy");
 const state = {
   screen: "home", character: 0, level: 0, unlocked: 1, score: 0, outs: 0, bases: [false, false, false],
   homeRuns: 0, phase: "idle", pitch: null, flight: null, paused: false, pauseStarted: null, resumeAction: null,
-  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, contact: null, lastGameWon: false, effectToken: 0
+  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, contact: null, lastGameWon: false, homeRunAt: null, effectToken: 0
 };
 const BGM_TRACKS = [
   "assets/music/level-1-sunny.mp3", "assets/music/level-2-sunny.mp3", "assets/music/level-3-sunset.mp3",
@@ -72,32 +74,34 @@ const backgroundMusic = new Audio();
 backgroundMusic.loop = true; backgroundMusic.volume = .24;
 // Supplied tracks are full-length songs; the 177s intro loops on Home, while
 // the 63s celebration plays once on victory only. Never layer with game BGM.
-const HOME_TRACK = "assets/music/little-devils-playbook.mp3";
+// The uploaded Little Devils\' Playbook is byte-for-byte identical to the committed level 6 track.
+const HOME_TRACK = "assets/music/level-6-devils.mp3";
 const VICTORY_TRACK = "assets/music/home-run-celebration.mp3";
 const homeMusic = new Audio(HOME_TRACK), victoryMusic = new Audio(VICTORY_TRACK);
 homeMusic.loop = true; homeMusic.volume = .20;
 victoryMusic.loop = false; victoryMusic.volume = .29;
-let backgroundLevel = null, homeIntroPausedByUser = false;
+let backgroundLevel = null, homeAutoplayBlocked = false;
 
 function stopPageMusic() {
   for (const audio of [homeMusic, victoryMusic]) { audio.pause(); audio.currentTime = 0; }
 }
-function updateIntroButton() {
-  $("introMusicButton").textContent = !homeMusic.paused && !state.muted ?
-    "Ⅱ 인트로 음악 잠시 멈춤" : "♪ 인트로 음악 듣기";
-  $("introMusicButton").setAttribute("aria-label", !homeMusic.paused && !state.muted ?
-    "인트로 음악 일시정지" : "인트로 음악 재생");
-}
 function playPageMusic(screen, fresh = false) {
   stopPageMusic();
-  if (state.muted) { updateIntroButton(); return; }
-  if (screen === "home" && !homeIntroPausedByUser) {
-    homeMusic.play().then(updateIntroButton).catch(updateIntroButton);
+  if (state.muted) return;
+  if (screen === "home") {
+    homeAutoplayBlocked = false;
+    homeMusic.play().catch(() => { homeAutoplayBlocked = true; });
   } else if (screen === "result" && state.lastGameWon) {
     if (fresh) victoryMusic.currentTime = 0;
-    victoryMusic.play().catch(() => { /* browser can require a user gesture or the asset may not be present */ });
+    victoryMusic.play().catch(error => { console.warn("승리 음악 재생 실패: MP3 파일 경로 또는 모바일 브라우저 정책을 확인하세요.", error); });
   }
-  updateIntroButton();
+}
+// Mobile Chrome may block sound before the first gesture. Retry on the first
+// normal touch/click/key event, without requiring a separate music control.
+function unlockHomeAudio() {
+  if (state.screen !== "home" || state.muted || !homeMusic.paused) return;
+  homeAutoplayBlocked = false;
+  homeMusic.play().catch(() => { homeAutoplayBlocked = true; });
 }
 
 const $ = (id) => document.getElementById(id);
@@ -117,8 +121,6 @@ function showScreen(name) {
   state.screen = name;
   if (name !== "game") stopBackgroundMusic();
   if (name !== "game") $("pitchGauge").hidden = true;
-  if (name === "home" && previousScreen !== "home") homeIntroPausedByUser = false;
-  if (name !== "home") homeIntroPausedByUser = false;
   document.querySelectorAll(".screen").forEach((screen) => screen.classList.toggle("active", screen.id === `${name}Screen`));
   if (name === "character") renderCharacters();
   if (name === "level") renderLevels();
@@ -148,7 +150,7 @@ function renderLevels() {
 function startGame(levelIndex) {
   Object.assign(state, { level: levelIndex, score: 0, outs: 0, strikes: 0, balls: 0, runsAllowed: 0, bases: [false, false, false], homeRuns: 0, phase: "between", pitch: null, flight: null, action: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, paused: false });
   configureField(levels[levelIndex].background);
-  state.contact = null; $("contactFeedback").hidden = true;
+  state.contact = null; state.homeRunAt = null; $("contactFeedback").hidden = true; $("homeRunBurst").hidden = true;
   state.token += 1; $("gameEyebrow").textContent = `LEVEL ${levelIndex + 1}`; $("gameTitle").textContent = levels[levelIndex].name;
   $("swingButton").textContent = state.mode === "pitching" ? "🥎 지금 던져요!" : "⚾ 지금 쳐요!";
   showScreen("game"); playBackgroundMusic(levelIndex); updateHud(); setMessage(state.mode === "pitching" ? "게이지 가운데에서 던져요!" : "공을 보고, 준비되면 눌러요!");
@@ -158,7 +160,7 @@ function startGame(levelIndex) {
 function nextPitch() {
   if (state.screen !== "game" || state.paused) return;
   if (state.mode === "pitching") { startPitcherTurn(); return; }
-  state.contact = null; $("contactFeedback").hidden = true;
+  state.contact = null; state.homeRunAt = null; $("contactFeedback").hidden = true;
   state.phase = "pitching"; state.pitch = { start: performance.now(), duration: levels[state.level].pitchMs, curve: Math.random() * 2 - 1, type: levels[state.level].type };
   state.action = { kind: "pitch", start: state.pitch.start }; state.fieldAction = null; state.foul = null; state.runningPlay = null; state.celebration = null;
   $("pitchHint").classList.remove("hide"); $("pitchHint").textContent = "공을 보고 눌러요!"; setMessage(`${levels[state.level].type}! 타이밍을 맞춰요.`); tone(250, .05);
@@ -343,7 +345,8 @@ function resolveHit(delta, cpuHit = false, signedDelta = 0) {
     { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases,
       runs: preview.runs, type, preview: true, committed: false };
   state.fieldAction = automatic?.action || null;
-  if (state.action) { state.action.outcome = type; if (cpuHit) state.action.hitAt = start; }
+  if (state.action) { state.action.outcome = type; state.action.hitAt = start; }
+  if (!cpuHit && type === "홈런") { state.homeRunAt = start; showHomeRunBurst(); }
   if (!cpuHit) showContactFeedback(contact);
   state.phase = "flight"; updateHud();
   setMessage(caught ? `${contact.shape}! 외야수가 공을 따라가요!` :
@@ -448,15 +451,21 @@ function buildGroundRace(now, target) {
   const targetNode = forcedCount + 1, destination = BASE_PATH[targetNode];
   const fieldingDelay = 360 - state.level * 28;
   const firstThrowStart = now + fieldingDelay, firstReceive = firstThrowStart + defensiveThrowDuration({ x: target.fieldX, y: target.fieldY }, destination);
-  const runnerArrival = state.flight.start + runningDuration(1), leadOut = firstReceive < runnerArrival;
+  // The first throw can target a *different runner* from the batter.
+  // Compare the lead runner with its own actual arrival; compare the relay with
+  // the batter's separately calculated first-base arrival.
+  const batterArrival = state.flight.start + runningDuration(1, 0, state.character);
+  const leadArrival = targetNode === 1 ? batterArrival :
+    state.flight.start + runningDuration(1, targetNode - 1, null);
+  const leadOut = firstReceive < leadArrival;
   const relay = targetNode > 1 && leadOut && state.outs + 1 < 3 && Math.random() < levels[state.level].doublePlayChance;
   const secondThrowStart = firstReceive + 150, secondReceive = relay ? secondThrowStart + defensiveThrowDuration(destination, BASE_PATH[1]) : null;
-  const batterOut = targetNode === 1 ? leadOut : relay && secondReceive < runnerArrival;
+  const batterOut = targetNode === 1 ? leadOut : relay && secondReceive < batterArrival;
   const result = buildGroundResult(state.bases, targetNode, leadOut, batterOut, state.character);
   const firstLabel = BASE_PATH[targetNode].label, stages = [{ at: firstReceive, out: leadOut, text: leadOut ? `${firstLabel} 포스 아웃!` : `${firstLabel} 세이프!`, fired: false }];
   if (relay) stages.push({ at: secondReceive, out: batterOut, text: batterOut ? "1루도 아웃!" : "1루 세이프!", fired: false });
   result.moves.forEach((move) => { if (move.out) move.outAt = move.role === "batter" && relay ? secondReceive : firstReceive; });
-  return { result, action: { kind: "groundRace", start: now, target, targetNode, firstThrowStart, firstReceive, secondThrowStart, secondReceive, relay, firstThrowPlayed: false, secondThrowPlayed: false, stages }, runnerArrival };
+  return { result, action: { kind: "groundRace", start: now, target, targetNode, firstThrowStart, firstReceive, secondThrowStart, secondReceive, relay, firstThrowPlayed: false, secondThrowPlayed: false, stages }, runnerArrival: leadArrival, batterArrival };
 }
 
 function defensiveThrowDuration(from, to) {
@@ -586,7 +595,11 @@ function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
 function runningDuration(distance, startNode = 0, character = state.character) {
   if (distance <= 0) return 0;
   const speedFactor = character === null ? 1 : characters[character].runnerSpeed;
-  return pathLength(startNode, Math.min(4, startNode + distance)) / .25 * speedFactor / RUNNER_SPEED_MULTIPLIER;
+  const baseTime = pathLength(startNode, Math.min(4, startNode + distance)) / .25 * speedFactor / RUNNER_SPEED_MULTIPLIER;
+  if (state.mode !== "batting" || startNode !== 0 || character === null) return baseTime;
+  // Apply the same shorter first-base leg to animations and every out/safe test.
+  const unassistedFirstLeg = pathLength(0, 1) / .25 * speedFactor / RUNNER_SPEED_MULTIPLIER;
+  return baseTime - unassistedFirstLeg * (1 - 1 / BATTER_FIRST_BASE_SPEED_BOOST);
 }
 
 function finishFlight() {
@@ -604,7 +617,7 @@ function finishFlight() {
   if (type === "홈런") {
     const result = buildRunningPlay(state.bases, distance), duration = playDuration(result.moves);
     state.runningPlay = { start: state.flight.start, duration, moves: result.moves, resultBases: result.bases, runs: result.runs, type, committed: false };
-    state.fieldAction = null; state.celebration = { start: now }; setMessage("홈런! 공이 외야 담장을 넘어갔어요!"); showEffect("홈런!", "homerun"); playEffectSound("homerun"); continuePlay(Math.max(0, state.flight.start + duration - now) + 450); return;
+    state.fieldAction = null; state.celebration = { start: now }; setMessage("홈런! 공이 외야 담장을 넘어갔어요!"); showEffect("★ 홈런! ★", "homerun"); playSound("homerun"); playEffectSound("homerun"); continuePlay(Math.max(0, state.flight.start + duration - now) + 450); return;
   }
   if (state.runningPlay?.dynamic) {
     const play = state.runningPlay, first = state.fieldAction?.legs[0];
@@ -729,6 +742,19 @@ function playEffectSound(kind) {
   audio.play().catch(() => { /* sound is optional */ });
 }
 
+function showHomeRunBurst() {
+  const burst = $("homeRunBurst"), token = state.token;
+  burst.hidden = false;
+  burst.classList.remove("animate");
+  void burst.offsetWidth;
+  burst.classList.add("animate");
+  setTimeout(() => {
+    if (token !== state.token) return;
+    burst.hidden = true;
+    burst.classList.remove("animate");
+  }, 1700);
+}
+
 function showEffect(text, kind) {
   const effect = $("playEffect"), wrap = $("gameWrap"), board = $("scoreboard"), token = ++state.effectToken;
   effect.className = "play-effect"; wrap.classList.remove("fx-out", "fx-runner"); board.classList.remove("fx-update"); void effect.offsetWidth;
@@ -761,7 +787,7 @@ function draw() {
   const flightProgress = state.phase === "flight" && state.flight ? Math.min(1, (now - state.flight.start) / state.flight.duration) : null;
   if (flightProgress !== null) { drawTrajectory(); drawFieldingAction(flightProgress); }
   else if (state.phase === "resulting" && state.fieldAction) drawFieldingResult(now);
-  drawCatcher(); drawBatter(now); drawCelebration(now);
+  drawCatcher(); drawHomeRunSpotlight(now); drawBatter(now); drawCelebration(now);
   if (state.phase === "pitching" && state.pitch) {
     const progress = Math.min(1, (now - state.pitch.start) / state.pitch.duration);
     const pitchX = fieldLayout.mound[0], pitchY = fieldLayout.mound[1] + 10;
@@ -843,21 +869,59 @@ function drawPitcher(now) {
   else drawOpponentFrame(frame, x, y, 78, 92);
 }
 
+// Existing full-body sprite frames: 0 ready, 1 load, 2 contact, 3 follow-through,
+// 4 celebration. A miss uses the follow-through without showing the ball in frame 2.
+function batterAnimationFrame(action, now) {
+  if (!action || action.kind !== "swing") return 0;
+  const elapsed = Math.max(0, now - action.start);
+  if (elapsed < 85) return 1;
+  if (action.outcome === "miss") return elapsed < 290 ? 3 : 0;
+  if (action.outcome === "홈런") return elapsed < 610 ? 2 : elapsed < 780 ? 3 : 4;
+  return elapsed < 165 ? 2 : elapsed < 370 ? 3 : 0;
+}
+
+function drawHomeRunSpotlight(now) {
+  if (state.mode !== "batting" || state.homeRunAt === null) return;
+  const elapsed = now - state.homeRunAt;
+  if (elapsed < 0 || elapsed > 650) return;
+  const fade = Math.min(1, elapsed / 95, (650 - elapsed) / 130);
+  ctx.save(); ctx.globalAlpha = .84 * Math.max(0, fade);
+  const gradient = ctx.createRadialGradient(264, 397, 85, 264, 397, 640);
+  gradient.addColorStop(0, "rgba(5,14,38,0)");
+  gradient.addColorStop(.32, "rgba(5,14,38,.16)");
+  gradient.addColorStop(1, "rgba(5,14,38,.75)");
+  ctx.fillStyle = gradient; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = "#ffe38a"; ctx.lineWidth = 4 + Math.sin(elapsed / 70) * 1.2;
+  ctx.beginPath(); ctx.ellipse(264, 385, 99, 132, -.12, 0, Math.PI * 2); ctx.stroke();
+  for (let i = 0; i < 11; i++) {
+    const angle = i * Math.PI * 2 / 11 + elapsed / 1100;
+    const x = 264 + Math.cos(angle) * 128, y = 392 + Math.sin(angle) * 156;
+    ctx.fillStyle = i % 2 ? "#fff4c8" : "#ffc94a";
+    ctx.beginPath(); ctx.arc(x, y, 3 + i % 3, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
 function drawBatter(now) {
-  if (state.runningPlay && (state.mode !== "pitching" || !state.action?.hitAt || now - state.action.hitAt > 340)) return;
+  const action = state.action;
   if (state.mode === "pitching") {
-    const action = state.action, hitElapsed = action?.hitAt ? now - action.hitAt : -1;
+    if (state.runningPlay && (!action?.hitAt || now - action.hitAt > 340)) return;
+    const hitElapsed = action?.hitAt ? now - action.hitAt : -1;
     let frame = 0;
     if (hitElapsed >= 0 && hitElapsed < 340) frame = hitElapsed < 130 ? 2 : 3;
-    else if (action?.kind === "throw" && state.phase === "pitching") frame = now - action.start > state.pitch.duration * .55 ? 1 : 0;
+    else if (action?.kind === "throw" && state.phase === "pitching")
+      frame = now - action.start > state.pitch.duration * .55 ? 1 : 0;
     drawGroundShadow(264, 509, 65, .18);
-    // An existing bat-holding sprite is preferable to a fielder with a glove.
     drawFrame("toribat", frame, 264, 509, 190, 213, false, state.level === 1 ? "hue-rotate(145deg)" : "none");
     return;
   }
-  const action = state.action; let frame = 0;
-  if (action?.kind === "swing") { const elapsed = now - action.start; frame = elapsed < 110 ? 1 : action.outcome === "홈런" && elapsed > 420 ? 4 : action.outcome === "miss" ? 1 : 2; }
-  drawGroundShadow(264, 509, 74, .22); drawFrame(characters[state.character].motion, frame, 264, 509, 218, 238);
+  const elapsed = action?.kind === "swing" ? now - action.start : Infinity;
+  // The batter remains visible long enough for contact and a 0.5s HR hold,
+  // then yields the field to the base-running sprite.
+  if (state.runningPlay && (action?.outcome === "홈런" ? elapsed >= 820 : elapsed >= 390)) return;
+  const frame = batterAnimationFrame(action, now);
+  drawGroundShadow(264, 509, 74, .22);
+  drawFrame(characters[state.character].motion, frame, 264, 509, 218, 238);
 }
 
 function drawCatcher() {
@@ -909,7 +973,8 @@ function runnerVisualState(move, now, start, finalLeg = true) {
   const progress = duration ? Math.max(0, Math.min(1, elapsed / duration)) : 1;
   if (move.endNode === 4 && now > start + duration + 220) return null;
   return { move, elapsed, progress, idle: progress >= 1,
-    slide: finalLeg && move.endNode < 4 && !move.out && !move.outAt && progress >= .94 && progress < 1 };
+    slide: finalLeg && move.endNode < 4 && !move.out && !move.outAt &&
+      progress >= (move.startNode === 0 && move.endNode === 1 ? .90 : .94) && progress < 1 };
 }
 
 function drawRunnerIdle(x, y, flip = false) {
@@ -923,7 +988,7 @@ function drawBaseRunners(now) {
     state.bases.forEach((occupied, index) => {
       if (!occupied) return;
       const base = BASE_PATH[index + 1];
-      drawRunnerIdle(base.x, base.y, index === 2);
+      drawRunnerIdle(base.x, base.y, index === 0 || index === 2);
     });
     return;
   }
@@ -940,12 +1005,12 @@ function drawBaseRunners(now) {
     const point = idle ? BASE_PATH[move.endNode] : runningPoint(move, progress);
     if (idle) {
       // Base arrival becomes a settled ready-to-run pose; no running bob or slide.
-      drawRunnerIdle(point.x, point.y, point.flip ?? (move.endNode === 3));
+      drawRunnerIdle(point.x, point.y, move.endNode === 1 || move.endNode === 3);
       continue;
     }
     const name = move.character === 2 ? "tori" : "runner";
     // Do not slide at an intermediate base if a further run segment is already queued.
-    const frame = runnerFrame(name, slide ? progress : Math.min(.93, progress), elapsed, true);
+    const frame = slide ? 3 : runnerFrame(name, Math.min(.93, progress), elapsed, true);
     const bob = frame === 3 ? 0 : Math.abs(Math.sin(elapsed / 115 * Math.PI)) * 3;
     drawGroundShadow(point.x, point.y, 27, .18);
     drawFrame(name, frame, point.x, point.y - bob, 70, 78, point.flip);
@@ -1155,20 +1220,35 @@ $("pitchTargets").addEventListener("click", (event) => {
 $("swingButton").addEventListener("click", swing); canvas.addEventListener("click", swing);
 $("pauseButton").addEventListener("click", () => togglePause(true)); $("closePause").addEventListener("click", () => togglePause(false)); $("resumeButton").addEventListener("click", () => togglePause(false));
 $("quitButton").addEventListener("click", () => { state.token += 1; state.phase = "idle"; togglePause(false); showScreen("level"); });
-$("resultRetry").addEventListener("click", () => startGame(state.level));
-$("resultPrimary").addEventListener("click", () => state.level + 1 < levels.length && state.level + 1 < state.unlocked ? startGame(state.level + 1) : showScreen("home"));
-$("introMusicButton").addEventListener("click", () => {
-  if (state.screen !== "home") return;
-  if (state.muted) { state.muted = false; $("soundToggle").textContent = "🔊"; $("soundToggle").setAttribute("aria-label", "소리 끄기"); }
-  if (!homeMusic.paused) { homeIntroPausedByUser = true; homeMusic.pause(); updateIntroButton(); }
-  else { homeIntroPausedByUser = false; homeMusic.play().then(updateIntroButton).catch(updateIntroButton); }
+// The result screen stays visible behind one short quiz; an incorrect answer
+// never blocks the child's next game. Leaving for Home needs no quiz.
+function startReplayQuiz(nextGame) {
+  if (state.screen !== "result") return;
+  window.BaseballQuiz.open(nextGame);
+}
+$("resultRetry").addEventListener("click", () => startReplayQuiz(() => startGame(state.level)));
+$("resultPrimary").addEventListener("click", () => {
+  const nextLevel = state.level + 1;
+  if (state.lastGameWon && nextLevel < levels.length && nextLevel < state.unlocked) {
+    startReplayQuiz(() => startGame(nextLevel));
+  } else {
+    showScreen("home");
+  }
 });
+window.BaseballQuizSound = correct => {
+  if (state.muted) return;
+  playSound(correct ? "safe" : "strike");
+};
+window.BaseballQuiz.init();
+document.addEventListener("pointerdown", unlockHomeAudio, { passive: true });
+document.addEventListener("touchstart", unlockHomeAudio, { passive: true });
+document.addEventListener("keydown", unlockHomeAudio);
 $("soundToggle").addEventListener("click", () => {
   state.muted = !state.muted;
   $("soundToggle").textContent = state.muted ? "🔇" : "🔊";
   $("soundToggle").setAttribute("aria-label", state.muted ? "소리 켜기" : "소리 끄기");
   if (state.muted) {
-    backgroundMusic.pause(); stopPageMusic(); updateIntroButton();
+    backgroundMusic.pause(); stopPageMusic();
   } else if (state.screen === "game" && !state.paused) {
     playBackgroundMusic(state.level);
   } else if (state.screen === "home" || state.screen === "result") {
@@ -1201,13 +1281,47 @@ function runSelfCheck() {
   state.mode = "pitching";
   const originalThrow = defensiveThrowDuration(BASE_PATH[1], BASE_PATH[2]);
   state.mode = savedMode;
-  console.assert(slowerThrow >= Math.round(originalThrow * 1.018) &&
-    slowerThrow <= Math.round(originalThrow * 1.022),
-    "타격 모드의 수비 송구만 약 2% 느려져야 합니다.");
+  console.assert(slowerThrow >= Math.round(originalThrow * 1.038) &&
+    slowerThrow <= Math.round(originalThrow * 1.042),
+    "기본 대비 수비 송구가 누적 약 4.04% 느려지고 투수 모드는 유지되어야 합니다.");
+  state.mode = "batting";
+  const assistedFirst = runningDuration(1, 0, 0);
+  const priorFirst = pathLength(0, 1) / .25 / RUNNER_SPEED_MULTIPLIER;
+  console.assert(Math.abs(assistedFirst * BATTER_FIRST_BASE_SPEED_BOOST - priorFirst) < .001,
+    "타자주자의 1루 도착 시간은 약 2.44% 단축되어야 합니다.");
+  console.assert(Math.abs(runningDuration(1, 1, null) -
+    pathLength(1, 2) / .25 / RUNNER_SPEED_MULTIPLIER) < .001,
+    "기존 1루 주자의 2루 진루 속도는 변경되지 않아야 합니다.");
+  const firstBaseSlide = runnerVisualState({ startNode: 0, endNode: 1,
+    character: 0, duration: assistedFirst }, assistedFirst * .92, 0);
+  console.assert(firstBaseSlide.slide && runnerVisualState({ startNode: 0, endNode: 1,
+    character: 0, duration: assistedFirst }, assistedFirst, 0).idle,
+    "1루 직전 슬라이딩은 먼저 시작하지만 도착 시 즉시 멈춰야 합니다.");
+  const savedFlightForGround = state.flight;
+  const savedBasesForGround = state.bases, savedOutsForGround = state.outs;
+  state.flight = { start: 0 }; state.bases = [true, false, false]; state.outs = 0;
+  const groundNearSecond = buildGroundRace(0,
+    { fieldX: BASE_PATH[2].x, fieldY: BASE_PATH[2].y, fielderIndex: 2, label: "2루수" });
+  console.assert(groundNearSecond.action.targetNode === 2 &&
+    groundNearSecond.runnerArrival === runningDuration(1, 1, null) &&
+    groundNearSecond.batterArrival === runningDuration(1, 0, state.character),
+    "2루 포스아웃 판단에는 선행주자 도착 시간, 1루 병살에는 타자 도착 시간을 각각 사용해야 합니다.");
+  state.flight = savedFlightForGround; state.bases = savedBasesForGround; state.outs = savedOutsForGround;
+  state.mode = savedMode;
   const dynamic = planAutomaticOutfieldPlay([false, false, false], 2,
     { fielderIndex: 6, fieldX: 705, fieldY: 212, label: "우익수" }, 0, 2100);
   console.assert(dynamic.play.dynamic && dynamic.play.runners.length === 1, "타격 후 주자별 자동 판단이 구성되어야 합니다.");
   console.assert(dynamic.action === null || dynamic.action.legs.every(leg => leg.node >= 1 && leg.node <= 3), "송구는 실제 베이스를 향해야 합니다.");
+  const midOutfield = { fieldX: BASE_PATH[2].x, fieldY: BASE_PATH[2].y + 18,
+    fielderIndex: 5, label: "중견수" };
+  const earlyField = planAutomaticOutfieldPlay([true, false, false], 1, midOutfield, 0, 700);
+  const lateField = planAutomaticOutfieldPlay([true, false, false], 1, midOutfield, 0, 1150);
+  console.assert(earlyField.action?.legs[0]?.node === 2 &&
+    earlyField.action?.legs[1]?.node === 1,
+    "2루 선행주자를 잡을 수 있을 때는 2루 송구 후 1루 중계를 우선해야 합니다.");
+  console.assert(lateField.action?.legs[0]?.node === 1 &&
+    lateField.play.runners[0].node === 2 && !lateField.play.runners[0].out,
+    "2루 주자가 이미 안전할 때는 늦은 2루 송구 대신 1루 아웃을 노려야 합니다.");
   for (let sample = 0; sample < 20; sample += 1) {
     const scenario = planAutomaticOutfieldPlay(
       [Boolean(sample & 1), Boolean(sample & 2), Boolean(sample & 4)], 1 + sample % 3,
@@ -1226,6 +1340,10 @@ function runSelfCheck() {
   console.assert(levels.map((level) => level.successChance * 10).join(",") === "9,8,7,6,5,4", "타구 성공 목표는 레벨마다 열 번 중 9~4번이어야 합니다.");
   console.assert(battedBallSucceeded(0, () => .89) && !battedBallSucceeded(5, () => .41), "레벨별 타구 성공 판정이 맞아야 합니다.");
   console.assert(BGM_TRACKS.length === levels.length && BGM_TRACKS.every((track) => track.endsWith(".mp3")), "각 레벨에는 한 개의 배경음이 배정되어야 합니다.");
+  console.assert(HOME_TRACK === BGM_TRACKS[5] && homeMusic.loop,
+    "인트로 음악은 검증된 기존 6레벨 곡을 반복 재생해야 합니다.");
+  console.assert(VICTORY_TRACK === "assets/music/home-run-celebration.mp3" && !victoryMusic.loop,
+    "승리 음악은 제공된 MP3의 GitHub 업로드 경로를 1회만 재생해야 합니다.");
   console.assert(Object.keys(SFX_TRACKS).length === 6 && Object.values(SFX_TRACKS).every((track) => track.endsWith(".mp3")), "여섯 가지 플레이 효과음이 있어야 합니다.");
   console.assert(images["minjun-glasses-0"].src.endsWith("minjun-glasses-0.png"), "정우 안경 동작 이미지가 있어야 합니다.");
   const homeRunTarget = chooseFlightTarget("홈런"); console.assert(homeRunTarget.ballY < fieldLayout.fenceY, "홈런 종점은 외야 펜스 너머여야 합니다.");
@@ -1234,6 +1352,13 @@ function runSelfCheck() {
   console.assert(isPitchInZone(centeredPitch), "정중앙을 정확히 겨냥한 공은 스트라이크존에 들어와야 합니다.");
   console.assert(!isPitchInZone({ x: PITCH_ZONE.x - 1, y: centerAim.y }), "존 바깥의 공은 볼이어야 합니다.");
   console.assert(PITCH_AIM_LABELS.length === 9, "투구 위치 선택은 아홉 칸이어야 합니다.");
+  const missMotion = { kind: "swing", start: 1000, outcome: "miss" };
+  const homerMotion = { kind: "swing", start: 1000, outcome: "홈런" };
+  console.assert(batterAnimationFrame(missMotion, 1200) === 3 &&
+    batterAnimationFrame(missMotion, 1450) === 0, "헛스윙은 끝까지 스윙하고 대기 자세로 돌아가야 합니다.");
+  console.assert(batterAnimationFrame(homerMotion, 1110) === 2 &&
+    batterAnimationFrame(homerMotion, 1510) === 2 &&
+    batterAnimationFrame(homerMotion, 1690) === 3, "홈런 타격 자세는 약 0.5초 유지되어야 합니다.");
   const baseCollision = planAutomaticOutfieldPlay([true, true, false], 3,
     { fieldX: 705, fieldY: 212, fielderIndex: 6, label: "우익수" }, 0, 2803);
   const safeSurvivors = baseCollision.play.runners.filter(runner => !runner.out && runner.node > 0 && runner.node < 4);
