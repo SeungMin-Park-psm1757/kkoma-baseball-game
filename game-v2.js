@@ -7,6 +7,8 @@ const levels = [
   { name: "챔피언 경기장", target: 10, pitchMs: 1250, window: .16, successChance: .4, hitFlightScale: 2.15, doublePlayChance: .38, foulChance: .16, type: "빠른 공 + 장애물", background: "hard", color: "#f28b7a" }
 ];
 const RUNNER_SPEED_MULTIPLIER = 1.05;
+// A 2% longer defensive throw helps the child in batting mode without changing runner speed or pitching difficulty.
+const BATTING_DEFENSE_TIME_FACTOR = 1.02;
 
 const characters = [
   { name: "정우", asset: "assets/02-character-minjun-power-glasses.png", motion: "minjun-glasses", role: "힘껏 치는 친구", detail: "홈런 타이밍이 조금 더 넓어요.", bonus: .025, runnerSpeed: 1, tag: "파워형" },
@@ -427,7 +429,8 @@ function buildGroundRace(now, target) {
 
 function defensiveThrowDuration(from, to) {
   const throwFactor = Math.max(.2, .32 - state.level * .024);
-  return Math.round((340 + Math.hypot(to.x - from.x, to.y - from.y) * throwFactor) * 1.1);
+  const battingAssist = state.mode === "batting" ? BATTING_DEFENSE_TIME_FACTOR : 1;
+  return Math.round((340 + Math.hypot(to.x - from.x, to.y - from.y) * throwFactor) * 1.1 * battingAssist);
 }
 
 function fieldingReleaseDelay(level = state.level) { return Math.max(150, 260 - level * 18); }
@@ -862,25 +865,55 @@ function drawFielders(now) {
   });
 }
 
+// The complete run has one settled pose per base. A runner must not keep
+// playing a running or sliding frame after its actual base arrival time.
+function runnerVisualState(move, now, start, finalLeg = true) {
+  if (!move) return null;
+  if (move.outAt && now > move.outAt + 220) return null;
+  const duration = move.duration || 0, elapsed = Math.max(0, now - start);
+  const progress = duration ? Math.max(0, Math.min(1, elapsed / duration)) : 1;
+  if (move.endNode === 4 && now > start + duration + 220) return null;
+  return { move, elapsed, progress, idle: progress >= 1,
+    slide: finalLeg && move.endNode < 4 && !move.out && !move.outAt && progress >= .94 && progress < 1 };
+}
+
+function drawRunnerIdle(x, y, flip = false) {
+  // One stable standing sprite is shared by stationary runners before/after a play.
+  drawGroundShadow(x, y, 23, .16);
+  drawStandalone("runnerStand", x, y - 5, 56, 70, flip);
+}
+
 function drawBaseRunners(now) {
   if (!state.runningPlay) {
     state.bases.forEach((occupied, index) => {
-      if (!occupied) return; const base = BASE_PATH[index + 1], height = index === 1 ? 54 : 64;
-      drawGroundShadow(base.x, base.y - 5, height * .32, .16); drawStandalone("runnerStand", base.x, base.y - 5, height * .86, height, index === 2);
-    }); return;
+      if (!occupied) return;
+      const base = BASE_PATH[index + 1];
+      drawRunnerIdle(base.x, base.y - 5, index === 2);
+    });
+    return;
   }
-  const visibleMoves = state.runningPlay.dynamic ? state.runningPlay.runners.map(runner => {
+  const play = state.runningPlay;
+  const selected = play.dynamic ? play.runners.map(runner => {
     const segments = runner.segments;
-    return segments.findLast(segment => segment.startAt <= now) || segments[0];
-  }) : state.runningPlay.moves;
-  for (const move of visibleMoves) {
-    if (!move || (move.outAt && now > move.outAt + 220)) continue;
-    const started = state.runningPlay.dynamic ? move.startAt : state.runningPlay.start;
-    const moveProgress = move.duration ? Math.max(0, Math.min(1, (now - started) / move.duration)) : 1;
-    const elapsed = Math.max(0, now - started), point = runningPoint(move, moveProgress);
-    const name = move.character === 2 ? "tori" : "runner", frame = runnerFrame(name, moveProgress, elapsed, move.endNode > move.startNode && moveProgress < 1);
+    const move = segments.findLast(segment => segment.startAt <= now) || segments[0];
+    return { move, start: move?.startAt, finalLeg: move === segments[segments.length - 1] };
+  }) : play.moves.map(move => ({ move, start: play.start, finalLeg: true }));
+  for (const { move, start, finalLeg } of selected) {
+    const pose = runnerVisualState(move, now, start, finalLeg);
+    if (!pose) continue;
+    const { progress, elapsed, idle, slide } = pose;
+    const point = idle ? BASE_PATH[move.endNode] : runningPoint(move, progress);
+    if (idle) {
+      // Base arrival becomes a settled ready-to-run pose; no running bob or slide.
+      drawRunnerIdle(point.x, point.y - 5, point.flip ?? (move.endNode === 3));
+      continue;
+    }
+    const name = move.character === 2 ? "tori" : "runner";
+    // Do not slide at an intermediate base if a further run segment is already queued.
+    const frame = runnerFrame(name, slide ? progress : Math.min(.93, progress), elapsed, true);
     const bob = frame === 3 ? 0 : Math.abs(Math.sin(elapsed / 115 * Math.PI)) * 3;
-    drawGroundShadow(point.x, point.y, 27, .18); drawFrame(name, frame, point.x, point.y - bob, 70, 78, point.flip);
+    drawGroundShadow(point.x, point.y, 27, .18);
+    drawFrame(name, frame, point.x, point.y - bob, 70, 78, point.flip);
   }
 }
 
@@ -1101,6 +1134,24 @@ function runSelfCheck() {
   result = buildGroundResult([true, true, false], 3, true, false, 0); console.assert(result.bases[0] && result.bases[1] && !result.bases[2], "3루 포스아웃 뒤 타자와 1루 주자는 살아야 합니다.");
   result = buildGroundResult([true, true, true], 4, false, false, 0); console.assert(result.runs === 1 && result.bases.every(Boolean), "만루에서 홈 세이프면 1점과 만루가 유지되어야 합니다.");
   console.assert(runnerFrame("runner", .5, 520, true) === 1 && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 배트 없는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
+  const arrivalTest = { startNode: 1, endNode: 2, character: null, duration: 500 };
+  console.assert(!runnerVisualState(arrivalTest, 499, 0).idle &&
+    runnerVisualState(arrivalTest, 500, 0).idle &&
+    runnerVisualState(arrivalTest, 900, 0).idle,
+    "베이스 도착 즉시 달리기를 끝내고 대기 자세를 유지해야 합니다.");
+  console.assert(runnerVisualState({ ...arrivalTest, endNode: 4 }, 800, 0) === null,
+    "홈에 도착한 주자는 잠시 후 화면에서 사라져야 합니다.");
+  console.assert(runnerVisualState({ ...arrivalTest, outAt: 490 }, 800, 0) === null,
+    "아웃된 주자는 아웃 연출 뒤 사라져야 합니다.");
+  const savedMode = state.mode;
+  state.mode = "batting";
+  const slowerThrow = defensiveThrowDuration(BASE_PATH[1], BASE_PATH[2]);
+  state.mode = "pitching";
+  const originalThrow = defensiveThrowDuration(BASE_PATH[1], BASE_PATH[2]);
+  state.mode = savedMode;
+  console.assert(slowerThrow >= Math.round(originalThrow * 1.018) &&
+    slowerThrow <= Math.round(originalThrow * 1.022),
+    "타격 모드의 수비 송구만 약 2% 느려져야 합니다.");
   const dynamic = planAutomaticOutfieldPlay([false, false, false], 2,
     { fielderIndex: 6, fieldX: 705, fieldY: 212, label: "우익수" }, 0, 2100);
   console.assert(dynamic.play.dynamic && dynamic.play.runners.length === 1, "타격 후 주자별 자동 판단이 구성되어야 합니다.");
