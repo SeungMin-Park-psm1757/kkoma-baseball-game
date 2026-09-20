@@ -104,3 +104,25 @@ h2 { font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1.05; letter-spacing: -.0
   .pitch-targets { grid-template-columns: repeat(3, 52px); }
   .pitch-target { height: 52px; }
 }
+
+/* Non-interactive feedback for a child's batting contact. Positioned away from the
+   central pitch hint and the main baseball play. */
+.contact-feedback { position: absolute; z-index: 3; top: 12px; right: 17px; width: 166px;
+  display: grid; justify-items: center; gap: 5px; padding: 10px 12px; border-radius: 16px;
+  border: 2px solid rgba(255,255,255,.95); color: var(--navy); background: rgba(255,253,248,.94);
+  box-shadow: 0 5px 16px rgba(16,35,63,.22); text-align: center; pointer-events: none; }
+.contact-feedback[hidden] { display: none; }
+.contact-feedback strong { font-size: 13px; line-height: 1.25; }
+.contact-feedback > span { font-size: 12px; font-weight: 900; line-height: 1.3; }
+.contact-feedback small { font-size: 11px; font-weight: 800; color: var(--muted); }
+.contact-map { position: relative; width: 82px; height: 64px; border: 2px solid var(--navy); border-radius: 8px;
+  background: linear-gradient(to right, transparent 32%, rgba(16,35,63,.15) 33%, rgba(16,35,63,.15) 34%, transparent 35%,transparent 65%,rgba(16,35,63,.15) 66%,rgba(16,35,63,.15) 67%,transparent 68%),
+    linear-gradient(to bottom, transparent 32%,rgba(16,35,63,.15) 33%,rgba(16,35,63,.15) 34%,transparent 35%,transparent 65%,rgba(16,35,63,.15) 66%,rgba(16,35,63,.15) 67%,transparent 68%),#eaf5ff; }
+.contact-map::after { content: ""; position: absolute; inset: 19% 28%; border: 1px dashed rgba(16,35,63,.4); border-radius: 50%; }
+.contact-dot { position: absolute; z-index: 1; top: 50%; left: 50%; width: 14px; height: 14px;
+  transform: translate(-50%,-50%); border-radius: 50%; background: var(--orange);
+  border: 2px solid white; box-shadow: 0 0 0 2px rgba(16,35,63,.5); }
+@media(max-width:760px) { .contact-feedback { right: 7px; top: 7px; width: 112px; padding: 6px 4px; gap: 3px; }
+  .contact-feedback strong { font-size: 10px; } .contact-feedback > span { font-size: 10px; }
+  .contact-feedback small { font-size: 9px; } .contact-map { width: 66px; height: 48px; }
+  .contact-dot { width: 12px; height: 12px; } }

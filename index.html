@@ -71,6 +71,12 @@
       <div id="gameWrap" class="game-wrap">
         <canvas id="gameCanvas" width="960" height="540" aria-label="야구 타격 게임"></canvas>
         <div id="pitchHint" class="pitch-hint">공을 보고 눌러요!</div>
+        <div id="contactFeedback" class="contact-feedback" hidden aria-live="polite">
+          <strong id="contactTitle">어디에 맞았을까?</strong>
+          <div class="contact-map" aria-hidden="true"><span id="contactDot" class="contact-dot"></span></div>
+          <span id="contactQuality">정확하게 맞았어요!</span>
+          <small id="contactShape">타구를 지켜봐요</small>
+        </div>
         <div id="pitchGauge" class="pitch-gauge" hidden aria-label="투구 타이밍 게이지"><span id="pitchNeedle"></span><b>좋아요!</b></div>
         <div id="playEffect" class="play-effect" role="status" aria-live="assertive"></div>
       </div>
