@@ -303,7 +303,7 @@ function resolveHit(delta, cpuHit = false, signedDelta = 0) {
   // A caught fly ball never enters the normal running planner: no phantom advance.
   const automatic = !caught && type !== "홈런" && type !== "땅볼" ?
     planAutomaticOutfieldPlay(state.bases, distance, target, start, start + duration) : null;
-  const preview = caught ? null : automatic ? null : buildRunningPlay(state.bases, distance, target, start + duration);
+  const preview = caught ? null : automatic ? null : buildRunningPlay(state.bases, distance, type === "홈런" ? null : target, start + duration);
   state.strikes = 0; playEffectSound("bat");
   state.runningPlay = caught ? null : automatic ? automatic.play :
     { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases,
@@ -470,7 +470,11 @@ function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
     const possibilities = runners.filter(runner => runner.moving && !runner.out && runner.nextNode < 4 && runner.arriveAt > time)
       .map((runner) => {
         const receive = time + defensiveThrowDuration(ball.from, BASE_PATH[runner.nextNode]);
-        return { runner, node: runner.nextNode, arrival: runner.arriveAt, receive, margin: receive + TAG_MS - runner.arriveAt };
+        const force = (runner.id === "batter" && runner.nextNode === 1) ||
+          (runner.startNode > 0 && runner.segments.length === 1 &&
+            bases.slice(0, runner.startNode).every(Boolean));
+        return { runner, node: runner.nextNode, arrival: runner.arriveAt,
+          receive, margin: receive + (force ? 0 : TAG_MS) - runner.arriveAt };
       });
     if (!possibilities.length) return null;
     // When an out is possible, pursue the nearest genuine play. Otherwise throw ahead
@@ -498,20 +502,22 @@ function planAutomaticOutfieldPlay(bases, distance, target, hitAt, fieldedAt) {
       const leg = ball.pending;
       if (!leg) continue;
       ball.from = BASE_PATH[leg.node]; ball.at = time + TRANSFER_MS; ball.pending = null;
-      const runner = event.runner, tagAt = runner.arriveAt + TAG_MS;
-      const out = runner.moving && !runner.out && runner.nextNode === leg.node && time + TAG_MS < runner.arriveAt;
+      const runner = event.runner;
+      const force = (runner.id === "batter" && leg.node === 1) ||
+        (runner.startNode > 0 && runner.segments.length === 1 &&
+          bases.slice(0, runner.startNode).every(Boolean));
+      // A force out occurs on receiving the ball; a non-force out needs tag time.
+      const outAt = time + (force ? 0 : TAG_MS);
+      const out = runner.moving && !runner.out && runner.nextNode === leg.node && outAt < runner.arriveAt;
       if (out) {
-        runner.out = true; outs += 1; runner.segments[runner.segments.length - 1].outAt = tagAt;
+        runner.out = true; outs += 1; runner.segments[runner.segments.length - 1].outAt = outAt;
         if (state.outs + outs >= 3 && thirdOutAt === Infinity) {
-          thirdOutAt = tagAt;
-          thirdOutWasForce = runner.id === "batter" && leg.node === 1 ||
-            runner.startNode > 0 && runner.segments.length === 1 &&
-            bases.slice(0, runner.startNode).every(Boolean);
+          thirdOutAt = outAt; thirdOutWasForce = force;
         }
       }
       const text = out ? (leg.node === 1 ? "공이 먼저! 1루 아웃!" : `태그 성공! ${BASE_PATH[leg.node].label} 아웃!`) :
         `${BASE_PATH[leg.node].label} 세이프!`;
-      stages.push({ at: out ? tagAt : Math.max(time, runner.arriveAt), out, text, fired: false });
+      stages.push({ at: out ? outAt : Math.max(time, runner.arriveAt), out, text, fired: false });
       if (state.outs + outs < 3) release(ball.at);
       continue;
     }
@@ -1121,6 +1127,20 @@ function runSelfCheck() {
   console.assert(isPitchInZone(centeredPitch), "정중앙을 정확히 겨냥한 공은 스트라이크존에 들어와야 합니다.");
   console.assert(!isPitchInZone({ x: PITCH_ZONE.x - 1, y: centerAim.y }), "존 바깥의 공은 볼이어야 합니다.");
   console.assert(PITCH_AIM_LABELS.length === 9, "투구 위치 선택은 아홉 칸이어야 합니다.");
+  // Deterministic contact/flight checks cover both sides of the bounce-vs-catch boundary.
+  const groundSample = generateBattedBall(.02, false, 0, () => 0);
+  console.assert(groundSample.grounder && !groundSample.caught && groundSample.bounceProgress < 1,
+    "땅볼은 반드시 첫 바운드 후 포구되어야 합니다.");
+  const flySequence = [.82, .5, .55, 0, .5, .5, .5, .5]; let sequenceIndex = 0;
+  const airborneSample = generateBattedBall(.02, false, 0, () => flySequence[sequenceIndex++ % flySequence.length]);
+  console.assert(airborneSample.caught && airborneSample.bounceProgress > 1,
+    "노바운드 포구가 결정된 뜬공은 바닥에 닿으면 안 됩니다.");
+  const savedFlightForBounce = state.flight;
+  state.flight = { ...groundSample, start: 0 };
+  const firstGround = flightPoint(groundSample.bounceProgress), afterGround = flightPoint(1);
+  console.assert(Math.abs(firstGround.y - firstGround.groundY) < .001 &&
+    Math.abs(afterGround.y - afterGround.groundY) < .001, "공의 첫 바운드 및 최종 위치는 지면이어야 합니다.");
+  state.flight = savedFlightForBounce;
 }
 
 loadProgress(); renderCharacters(); renderLevels(); runSelfCheck(); updateHud(); requestAnimationFrame(draw);
