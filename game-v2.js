@@ -563,6 +563,18 @@ function togglePause(paused) {
   else {
     const elapsed = state.pauseStarted ? performance.now() - state.pauseStarted : 0;
     for (const timed of [state.pitch, state.flight, state.foul, state.action, state.fieldAction, state.runningPlay, state.celebration]) if (timed?.start) timed.start += elapsed;
+    // Keep absolute event timestamps synchronized with the paused animation clock.
+    if (state.runningPlay?.dynamic) {
+      state.runningPlay.lastAt += elapsed;
+      for (const move of state.runningPlay.moves) {
+        move.startAt += elapsed; move.endAt += elapsed;
+        if (move.outAt) move.outAt += elapsed;
+      }
+    }
+    if (state.fieldAction?.kind === "hitRace") {
+      for (const leg of state.fieldAction.legs) { leg.throwStart += elapsed; leg.receive += elapsed; }
+      for (const stage of state.fieldAction.stages) stage.at += elapsed;
+    }
     state.paused = false; state.pauseStarted = null; const action = state.resumeAction; state.resumeAction = null;
     playBackgroundMusic(state.level); updatePitchControls();
     if (action) action(); else if (state.phase === "between" && !state.pitch) setTimeout(nextPitch, 180);
@@ -762,10 +774,16 @@ function drawBaseRunners(now) {
       drawGroundShadow(base.x, base.y - 5, height * .32, .16); drawStandalone("runnerStand", base.x, base.y - 5, height * .86, height, index === 2);
     }); return;
   }
-  for (const move of state.runningPlay.moves) {
-    if (move.outAt && now > move.outAt + 220) continue;
-    const moveProgress = move.duration ? Math.min(1, (now - state.runningPlay.start) / move.duration) : 1;
-    const elapsed = now - state.runningPlay.start, point = runningPoint(move, moveProgress), name = move.character === 2 ? "tori" : "runner", frame = runnerFrame(name, moveProgress, elapsed, move.endNode > move.startNode);
+  const visibleMoves = state.runningPlay.dynamic ? state.runningPlay.runners.map(runner => {
+    const segments = runner.segments;
+    return segments.findLast(segment => segment.startAt <= now) || segments[0];
+  }) : state.runningPlay.moves;
+  for (const move of visibleMoves) {
+    if (!move || (move.outAt && now > move.outAt + 220)) continue;
+    const started = state.runningPlay.dynamic ? move.startAt : state.runningPlay.start;
+    const moveProgress = move.duration ? Math.max(0, Math.min(1, (now - started) / move.duration)) : 1;
+    const elapsed = Math.max(0, now - started), point = runningPoint(move, moveProgress);
+    const name = move.character === 2 ? "tori" : "runner", frame = runnerFrame(name, moveProgress, elapsed, move.endNode > move.startNode && moveProgress < 1);
     const bob = frame === 3 ? 0 : Math.abs(Math.sin(elapsed / 115 * Math.PI)) * 3;
     drawGroundShadow(point.x, point.y, 27, .18); drawFrame(name, frame, point.x, point.y - bob, 70, 78, point.flip);
   }
@@ -862,16 +880,28 @@ function drawFieldingResult(now) {
   }
   if (action.kind === "hitRace") {
     const firstLeg = action.legs[0];
-    drawGroundShadow(at.x, at.y, 25, .18); drawOpponentFrame(now < firstLeg.throwStart ? 0 : 4, at.x, at.y, 66, 82, target.fieldX < fielder.x);
-    if (now < firstLeg.throwStart) { drawReceiver(firstLeg.node); drawTag(`${target.label} 포구!`, at.x, at.y + 18, "#10233f"); return; }
-    const leg = action.legs.find((item) => now < item.receive) || action.legs[action.legs.length - 1];
-    const legIndex = action.legs.indexOf(leg), glove = { x: BASE_PATH[leg.node].x, y: BASE_PATH[leg.node].y - 42 };
-    drawReceiver(leg.node);
-    if (now >= leg.throwStart && now < leg.receive) {
-      const from = legIndex === 0 ? { x: at.x, y: at.y - 52 } : leg.from;
-      drawThrowBall(from, glove, (now - leg.throwStart) / (leg.receive - leg.throwStart));
-      drawTag(`${BASE_PATH[leg.node].label}로 송구!`, (from.x + glove.x) / 2, (from.y + glove.y) / 2 - 24, "#10233f");
+    if (now < firstLeg.throwStart) {
+      drawGroundShadow(at.x, at.y, 25, .18); drawOpponentFrame(0, at.x, at.y, 66, 82, target.fieldX < fielder.x);
+      drawTag(`${target.label} 포구!`, at.x, at.y + 18, "#10233f"); return;
     }
+    const leg = action.legs.find(item => now < item.receive);
+    if (!leg) {
+      const last = action.legs[action.legs.length - 1];
+      drawReceiver(last.node); return;
+    }
+    const legIndex = action.legs.indexOf(leg), source = leg.from;
+    const glove = { x: BASE_PATH[leg.node].x, y: BASE_PATH[leg.node].y - 42 };
+    drawReceiver(leg.node);
+    if (now < leg.throwStart) {
+      drawGroundShadow(source.x, source.y, 23, .18);
+      drawOpponentFrame(0, source.x, source.y + 8, 58, 74); return;
+    }
+    drawGroundShadow(source.x, source.y, 25, .18);
+    drawOpponentFrame(4, source.x, source.y + 8, legIndex === 0 ? 66 : 58, legIndex === 0 ? 82 : 74);
+    drawThrowBall({ x: source.x, y: source.y - 52 }, glove,
+      (now - leg.throwStart) / (leg.receive - leg.throwStart));
+    drawTag(`${BASE_PATH[leg.node].label}로 송구!`, (source.x + glove.x) / 2,
+      (source.y - 52 + glove.y) / 2 - 24, "#10233f");
     return;
   }
   if (action.kind === "catch") {
