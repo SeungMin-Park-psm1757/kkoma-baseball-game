@@ -453,6 +453,9 @@ function endGame(won) {
 function updateHud() {
   const pitching = state.mode === "pitching";
   $("scoreboard").classList.toggle("pitching", pitching);
+  $("gameControls").classList.toggle("pitching", pitching);
+  $("pitchLocation").hidden = !pitching;
+  updatePitchControls();
   $("scoreLabel").textContent = pitching ? "실점" : "내 점수"; $("targetLabel").textContent = pitching ? "목표" : "목표";
   $("scoreValue").textContent = pitching ? state.runsAllowed : state.score; $("targetValue").textContent = pitching ? "3아웃" : levels[state.level].target;
   $("strikeValue").textContent = `${state.strikes} / 3`; $("ballBoard").hidden = !pitching; $("ballValue").textContent = `${state.balls} / 4`; $("outValue").textContent = `${state.outs} / 3`;
@@ -478,7 +481,7 @@ function togglePause(paused) {
     const elapsed = state.pauseStarted ? performance.now() - state.pauseStarted : 0;
     for (const timed of [state.pitch, state.flight, state.foul, state.action, state.fieldAction, state.runningPlay, state.celebration]) if (timed?.start) timed.start += elapsed;
     state.paused = false; state.pauseStarted = null; const action = state.resumeAction; state.resumeAction = null;
-    playBackgroundMusic(state.level);
+    playBackgroundMusic(state.level); updatePitchControls();
     if (action) action(); else if (state.phase === "between" && !state.pitch) setTimeout(nextPitch, 180);
   }
   $("pausePanel").hidden = !paused;
@@ -532,6 +535,7 @@ function draw() {
   if (!state.paused) updatePlayEvents(now);
   if (state.mode === "pitching" && state.phase === "pitchReady") $("pitchNeedle").style.left = `${pitchGaugePosition(now)}%`;
   ctx.clearRect(0, 0, canvas.width, canvas.height); drawBackground(level); drawBases(); drawFielders(now); drawPitcher(now); drawBaseRunners(now);
+  if (state.mode === "pitching") drawPitchZone();
   const flightProgress = state.phase === "flight" && state.flight ? Math.min(1, (now - state.flight.start) / state.flight.duration) : null;
   if (flightProgress !== null) { drawTrajectory(); drawFieldingAction(flightProgress); }
   else if (state.phase === "resulting" && state.fieldAction) drawFieldingResult(now);
@@ -539,7 +543,9 @@ function draw() {
   if (state.phase === "pitching" && state.pitch) {
     const progress = Math.min(1, (now - state.pitch.start) / state.pitch.duration);
     const pitchX = fieldLayout.mound[0], pitchY = fieldLayout.mound[1] + 10;
-    drawBall(pitchX + (CONTACT.x - pitchX) * progress + Math.sin(progress * Math.PI) * state.pitch.curve * 75, pitchY + (CONTACT.y - pitchY) * progress, 7 + progress * 5);
+    const end = state.mode === "pitching" ? state.pitch.landing : CONTACT;
+    drawBall(pitchX + (end.x - pitchX) * progress + Math.sin(progress * Math.PI) * state.pitch.curve * (state.mode === "pitching" ? 12 : 75),
+      pitchY + (end.y - pitchY) * progress, 7 + progress * 5);
     if (progress >= 1 && !state.paused) { if (state.mode === "pitching") finishPitch(); else resolveStrike("조금 늦었어요"); }
   } else if (state.phase === "flight" && state.flight) {
     const point = flightPoint(flightProgress); drawBall(point.x, point.y, Math.max(6, 11 - flightProgress * 4)); if (flightProgress >= 1 && !state.paused) finishFlight();
@@ -547,6 +553,31 @@ function draw() {
     const progress = Math.min(1, (now - state.foul.start) / 520); drawFoulTrajectory(); const point = foulPoint(progress); drawBall(point.x, point.y, 8);
   }
   requestAnimationFrame(draw);
+}
+
+function drawPitchZone() {
+  if (state.phase === "idle" || state.phase === "between") return;
+  const { x, y, width, height } = PITCH_ZONE, aim = pitchAimPoint();
+  ctx.save();
+  ctx.fillStyle = "rgba(16,35,63,.32)"; ctx.strokeStyle = "rgba(255,255,255,.96)"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(x, y, width, height, 7); ctx.fill(); ctx.stroke();
+  ctx.strokeStyle = "rgba(255,255,255,.46)"; ctx.lineWidth = 1.5;
+  for (let i = 1; i < 3; i += 1) {
+    ctx.beginPath(); ctx.moveTo(x + width * i / 3, y); ctx.lineTo(x + width * i / 3, y + height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, y + height * i / 3); ctx.lineTo(x + width, y + height * i / 3); ctx.stroke();
+  }
+  ctx.strokeStyle = "#ffc94a"; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.arc(aim.x, aim.y, 12, 0, Math.PI * 2); ctx.stroke();
+  if (state.pitchLanding) {
+    const point = state.pitchLanding;
+    ctx.strokeStyle = isPitchInZone(point) ? "#6bea9c" : "#ff7c62";
+    ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(point.x, point.y, 9, 0, Math.PI * 2); ctx.stroke();
+    if (state.pitch?.resolved) {
+      ctx.fillStyle = "white"; ctx.font = "900 15px sans-serif"; ctx.textAlign = "center";
+      ctx.fillText(isPitchInZone(point) ? "존 안!" : "존 밖!", x + width / 2, y - 13);
+    }
+  }
+  ctx.restore();
 }
 
 function drawBackground(level) {
@@ -585,8 +616,17 @@ function drawPitcher(now) {
 }
 
 function drawBatter(now) {
-  if (state.runningPlay) return;
-  if (state.mode === "pitching") { drawGroundShadow(264, 509, 48, .18); drawOpponentFrame(0, 264, 509, 116, 138, true); return; }
+  if (state.runningPlay && (state.mode !== "pitching" || !state.action?.hitAt || now - state.action.hitAt > 340)) return;
+  if (state.mode === "pitching") {
+    const action = state.action, hitElapsed = action?.hitAt ? now - action.hitAt : -1;
+    let frame = 0;
+    if (hitElapsed >= 0 && hitElapsed < 340) frame = hitElapsed < 130 ? 2 : 3;
+    else if (action?.kind === "throw" && state.phase === "pitching") frame = now - action.start > state.pitch.duration * .55 ? 1 : 0;
+    drawGroundShadow(264, 509, 65, .18);
+    // An existing bat-holding sprite is preferable to a fielder with a glove.
+    drawFrame("toribat", frame, 264, 509, 190, 213, false, state.level === 1 ? "hue-rotate(145deg)" : "none");
+    return;
+  }
   const action = state.action; let frame = 0;
   if (action?.kind === "swing") { const elapsed = now - action.start; frame = elapsed < 110 ? 1 : action.outcome === "홈런" && elapsed > 420 ? 4 : action.outcome === "miss" ? 1 : 2; }
   drawGroundShadow(264, 509, 74, .22); drawFrame(characters[state.character].motion, frame, 264, 509, 218, 238);
@@ -594,7 +634,7 @@ function drawBatter(now) {
 
 function drawCatcher() {
   drawGroundShadow(112, 516, 50, .2);
-  if (state.level >= 1) drawOpponentFrame(0, 112, 516, 110, 128); else drawFrame("catcher", 0, 112, 516, 132, 154);
+  drawFrame("catcher", 0, 112, 516, 132, 154);
 }
 
 function drawBaseLines() {
@@ -789,6 +829,15 @@ function chooseMode(mode) { state.mode = mode; tone(440, .08); showScreen("chara
 $("startButton").addEventListener("click", () => chooseMode("batting"));
 $("pitcherStart").addEventListener("click", () => chooseMode("pitching"));
 $("characterNext").addEventListener("click", () => { tone(440, .08); showScreen("level"); });
+$("pitchTargets").innerHTML = PITCH_AIM_SYMBOLS.map((symbol, index) =>
+  `<button type="button" class="pitch-target" data-pitch-target data-row="${Math.floor(index / 3)}" data-col="${index % 3}"
+    aria-label="${PITCH_AIM_LABELS[index]}로 던지기" aria-pressed="${index === 4}">${symbol}</button>`).join("");
+$("pitchTargets").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-pitch-target]");
+  if (!button || state.mode !== "pitching" || state.phase !== "pitchReady" || state.paused) return;
+  state.pitchAim = { row: Number(button.dataset.row), col: Number(button.dataset.col) };
+  updatePitchControls(); setMessage(`${PITCH_AIM_LABELS[state.pitchAim.row * 3 + state.pitchAim.col]}로 던져 볼까요?`); tone(440, .05);
+});
 $("swingButton").addEventListener("click", swing); canvas.addEventListener("click", swing);
 $("pauseButton").addEventListener("click", () => togglePause(true)); $("closePause").addEventListener("click", () => togglePause(false)); $("resumeButton").addEventListener("click", () => togglePause(false));
 $("quitButton").addEventListener("click", () => { state.token += 1; state.phase = "idle"; togglePause(false); showScreen("level"); });
@@ -821,6 +870,10 @@ function runSelfCheck() {
   console.assert(images["minjun-glasses-0"].src.endsWith("minjun-glasses-0.png"), "정우 안경 동작 이미지가 있어야 합니다.");
   const homeRunTarget = chooseFlightTarget("홈런"); console.assert(homeRunTarget.ballY < fieldLayout.fenceY, "홈런 종점은 외야 펜스 너머여야 합니다.");
   console.assert(levels.length === 6, "여섯 레벨이 있어야 합니다.");
+  const centerAim = pitchAimPoint(1, 1), centeredPitch = pitchLandingPoint(centerAim, 0, () => .5);
+  console.assert(isPitchInZone(centeredPitch), "정중앙을 정확히 겨냥한 공은 스트라이크존에 들어와야 합니다.");
+  console.assert(!isPitchInZone({ x: PITCH_ZONE.x - 1, y: centerAim.y }), "존 바깥의 공은 볼이어야 합니다.");
+  console.assert(PITCH_AIM_LABELS.length === 9, "투구 위치 선택은 아홉 칸이어야 합니다.");
 }
 
 loadProgress(); renderCharacters(); renderLevels(); runSelfCheck(); updateHud(); requestAnimationFrame(draw);
