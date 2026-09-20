@@ -56,7 +56,7 @@ configureField("easy");
 const state = {
   screen: "home", character: 0, level: 0, unlocked: 1, score: 0, outs: 0, bases: [false, false, false],
   homeRuns: 0, phase: "idle", pitch: null, flight: null, paused: false, pauseStarted: null, resumeAction: null,
-  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, effectToken: 0
+  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, contact: null, effectToken: 0
 };
 const BGM_TRACKS = [
   "assets/music/level-1-sunny.mp3", "assets/music/level-2-sunny.mp3", "assets/music/level-3-sunset.mp3",
@@ -114,6 +114,7 @@ function renderLevels() {
 function startGame(levelIndex) {
   Object.assign(state, { level: levelIndex, score: 0, outs: 0, strikes: 0, balls: 0, runsAllowed: 0, bases: [false, false, false], homeRuns: 0, phase: "between", pitch: null, flight: null, action: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, paused: false });
   configureField(levels[levelIndex].background);
+  state.contact = null; $("contactFeedback").hidden = true;
   state.token += 1; $("gameEyebrow").textContent = `LEVEL ${levelIndex + 1}`; $("gameTitle").textContent = levels[levelIndex].name;
   $("swingButton").textContent = state.mode === "pitching" ? "🥎 지금 던져요!" : "⚾ 지금 쳐요!";
   showScreen("game"); playBackgroundMusic(levelIndex); updateHud(); setMessage(state.mode === "pitching" ? "게이지 가운데에서 던져요!" : "공을 보고, 준비되면 눌러요!");
@@ -123,6 +124,7 @@ function startGame(levelIndex) {
 function nextPitch() {
   if (state.screen !== "game" || state.paused) return;
   if (state.mode === "pitching") { startPitcherTurn(); return; }
+  state.contact = null; $("contactFeedback").hidden = true;
   state.phase = "pitching"; state.pitch = { start: performance.now(), duration: levels[state.level].pitchMs, curve: Math.random() * 2 - 1, type: levels[state.level].type };
   state.action = { kind: "pitch", start: state.pitch.start }; state.fieldAction = null; state.foul = null; state.runningPlay = null; state.celebration = null;
   $("pitchHint").classList.remove("hide"); $("pitchHint").textContent = "공을 보고 눌러요!"; setMessage(`${levels[state.level].type}! 타이밍을 맞춰요.`); tone(250, .05);
@@ -145,7 +147,7 @@ function swing() {
   state.phase = "swinging"; state.action = { kind: "swing", start: now, outcome: null }; $("pitchHint").classList.add("hide"); tone(180, .1);
   if (Math.abs(delta) > windowSize) resolveStrike(delta < 0 ? "조금 빨라요" : "조금 늦었어요");
   else if (Math.abs(delta) > windowSize * (1 - levels[state.level].foulChance * 2)) resolveFoul();
-  else resolveHit(Math.abs(delta));
+  else resolveHit(Math.abs(delta), false, delta);
 }
 
 function pitchGaugePosition(now = performance.now()) { return 50 + Math.sin((now - state.pitch.start) / 420) * 44; }
@@ -243,33 +245,100 @@ function resolveFoul() {
   playEffectSound("bat"); tone(150, .12); updateHud(); continuePlay(850);
 }
 
-function resolveHit(delta, cpuHit = false) {
-  let type = "단타"; if (delta < .008) type = "홈런"; else if (delta < .017) type = "3루타"; else if (delta < .035) type = "2루타";
-  const safeHit = cpuHit ? Math.random() < .28 + (state.pitch?.accuracy || 0) * .55 : battedBallSucceeded(state.level);
-  if (!safeHit && type === "홈런") type = "단타";
-  if (!safeHit && Math.random() < .55) type = "땅볼";
-  const start = performance.now(), distance = hitDistance(type), duration = flightDuration(type, safeHit), target = chooseFlightTarget(type);
-  state.flight = { start, duration, type, caught: false, target };
-  const automatic = type !== "홈런" && type !== "땅볼" ?
-    planAutomaticOutfieldPlay(state.bases, distance, target, start, start + duration) : null;
-  const preview = automatic ? null : buildRunningPlay(state.bases, distance, target, start + duration);
-  state.strikes = 0; playEffectSound("bat");
-  state.runningPlay = automatic ? automatic.play :
-    { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
-  state.fieldAction = automatic?.action || null;
-  if (state.action) { state.action.outcome = type; if (cpuHit) state.action.hitAt = start; }
-  const hitMessage = type === "단타" ? "짧은 외야 타구! 주자와 송구의 승부예요." : type === "2루타" ? "외야 깊은 타구! 2루까지 달려요." : "담장 쪽 깊은 타구! 3루에 도전해요.";
-  state.phase = "flight"; updateHud(); setMessage(type === "홈런" ? "완벽해요! 담장 너머로 날아가요!" : type === "땅볼" ? "땅볼! 수비수가 달려와요!" : hitMessage); tone(type === "홈런" ? 700 : 520, .12);
+// A batted ball has independent contact quality, launch shape and field direction.
+// Scoring is decided by the subsequent fielding/runner events, not an instant hit label.
+function clamp(value, min, max) { return Math.max(min, Math.min(max, value)); }
+
+function generateBattedBall(delta, cpuHit = false, signedDelta = 0, random = Math.random) {
+  const windowSize = levels[state.level].window + characters[state.character].bonus;
+  const quality = cpuHit ? clamp(1 - delta / .23, .12, .96) :
+    clamp(1 - delta / windowSize, .06, 1);
+  const timing = cpuHit ? (random() - .5) * .85 : clamp(signedDelta / windowSize, -1, 1);
+  const vertical = random() * 2 - 1;
+  const direction = clamp((random() * 2 - 1) * .85 - timing * .28, -1, 1);
+  const lift = clamp(vertical + (quality - .5) * .2, -1, 1);
+  const shape = lift < -.55 ? "땅볼" : lift < -.13 ? "낮은 직선타" :
+    lift < .29 ? "강한 직선타" : lift < .68 ? "뜬공" : "높은 뜬공";
+  const grounder = shape === "땅볼";
+  const power = clamp(quality * .73 + random() * .27, 0, 1);
+  let type = grounder ? "땅볼" : power > .94 && lift > .36 ? "홈런" :
+    power > .82 && lift > -.12 ? "3루타" :
+    power > .61 && lift > -.4 ? "2루타" : "단타";
+  const potentialCatch = !grounder && type !== "홈런" &&
+    clamp((1 - levels[state.level].successChance) * (shape === "높은 뜬공" || shape === "뜬공" ? 1.1 : .66)
+      * (1.2 - quality * .33), .015, .7);
+  const caught = random() < potentialCatch;
+  const duration = type === "홈런" ? 1900 + random() * 520 :
+    grounder ? 650 + power * 390 :
+      shape === "높은 뜬공" ? 1900 + random() * 660 :
+        shape === "뜬공" ? 1640 + random() * 570 : 1050 + random() * 570;
+  const bounceProgress = grounder ? .16 + random() * .11 : .56 + random() * .2;
+  // A caught ball terminates before its first predicted landing.
+  const flightDurationMs = caught ? Math.round(duration * Math.min(.83, bounceProgress * .84)) : Math.round(duration);
+  const target = chooseFlightTarget(type, { direction, power, random });
+  const contact = { x: timing, y: vertical, quality, shape, direction };
+  return { type, caught, duration: flightDurationMs, bounceProgress: caught ? 1.1 : bounceProgress,
+    target, contact, grounder };
 }
 
-function chooseFlightTarget(type) {
-  const zones = type === "땅볼" ? [[1, 430, 336, 405, 328], [2, 585, 336, 590, 326], [0, 220, 350, 205, 342]] : type === "단타"
-    ? [[4, 300, 250, 300, 250], [5, 480, 235, 480, 235], [6, 660, 250, 660, 250]]
-    : type === "2루타" ? [[4, 180, 205, 205, 215], [6, 780, 205, 755, 215]]
-      : type === "3루타" ? [[4, 120, 175, 145, 185], [6, 840, 175, 815, 185]]
-        : [[5, 270, fieldLayout.fenceY - 58, 480, fieldLayout.fenceY], [6, 700, fieldLayout.fenceY - 52, 700, fieldLayout.fenceY]];
-  const [fielderIndex, ballX, ballY, fieldX, fieldY] = zones[Math.floor(Math.random() * zones.length)];
-  return { fielderIndex, ballX, ballY, fieldX, fieldY, label: type === "홈런" ? `${FIELDERS[fielderIndex].label} 뒤 담장` : FIELDERS[fielderIndex].label };
+function showContactFeedback(contact) {
+  state.contact = contact;
+  if (state.mode !== "batting") return;
+  const score = Math.round(contact.quality * 100);
+  $("contactFeedback").hidden = false;
+  $("contactTitle").textContent = "어디에 맞았을까?";
+  $("contactDot").style.left = `${50 + contact.x * 40}%`;
+  $("contactDot").style.top = `${50 + contact.y * 40}%`;
+  $("contactQuality").textContent = score >= 80 ? "정확하게 맞았어요!" :
+    score >= 50 ? "좋은 타격이에요!" : "다음엔 가운데를 노려요!";
+  $("contactShape").textContent = contact.shape;
+}
+
+function resolveHit(delta, cpuHit = false, signedDelta = 0) {
+  const ball = generateBattedBall(delta, cpuHit, signedDelta);
+  const { type, caught, target, contact } = ball, start = performance.now();
+  const distance = hitDistance(type), duration = ball.duration;
+  state.flight = { start, duration, type, caught, target, contact, bounceProgress: ball.bounceProgress,
+    grounder: ball.grounder, bounced: false };
+  // A caught fly ball never enters the normal running planner: no phantom advance.
+  const automatic = !caught && type !== "홈런" && type !== "땅볼" ?
+    planAutomaticOutfieldPlay(state.bases, distance, target, start, start + duration) : null;
+  const preview = caught ? null : automatic ? null : buildRunningPlay(state.bases, distance, target, start + duration);
+  state.strikes = 0; playEffectSound("bat");
+  state.runningPlay = caught ? null : automatic ? automatic.play :
+    { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases,
+      runs: preview.runs, type, preview: true, committed: false };
+  state.fieldAction = automatic?.action || null;
+  if (state.action) { state.action.outcome = type; if (cpuHit) state.action.hitAt = start; }
+  if (!cpuHit) showContactFeedback(contact);
+  state.phase = "flight"; updateHud();
+  setMessage(caught ? `${contact.shape}! 외야수가 공을 따라가요!` :
+    type === "홈런" ? "높이 날아가요! 담장을 넘어갈까요?" :
+    type === "땅볼" ? "땅볼! 공이 튀며 굴러가요!" :
+    `${contact.shape}! 첫 바운드 뒤 수비의 승부예요.`);
+  tone(type === "홈런" ? 700 : 520, .12);
+}
+
+function chooseFlightTarget(type, profile = null) {
+  if (!profile) {
+    const zones = type === "땅볼" ? [[1, 430, 336, 405, 328], [2, 585, 336, 590, 326], [0, 220, 350, 205, 342]] :
+      type === "홈런" ? [[5, 270, fieldLayout.fenceY - 58, 480, fieldLayout.fenceY],
+        [6, 700, fieldLayout.fenceY - 52, 700, fieldLayout.fenceY]] :
+        [[4, 300, 250, 300, 250], [5, 480, 235, 480, 235], [6, 660, 250, 660, 250]];
+    const [fielderIndex, ballX, ballY, fieldX, fieldY] = zones[Math.floor(Math.random() * zones.length)];
+    return { fielderIndex, ballX, ballY, fieldX, fieldY, label: type === "홈런" ? `${FIELDERS[fielderIndex].label} 뒤 담장` : FIELDERS[fielderIndex].label };
+  }
+  const { direction, power, random } = profile, grounder = type === "땅볼", homer = type === "홈런";
+  const fielderIndex = grounder ? direction < -.35 ? 0 : direction > .35 ? 2 : 1 :
+    direction < -.29 ? 4 : direction > .29 ? 6 : 5;
+  const spread = grounder ? 205 : 270;
+  const x = clamp(480 + direction * spread + (random() - .5) * 62, grounder ? 150 : 125, grounder ? 800 : 840);
+  const y = homer ? fieldLayout.fenceY - 53 - random() * 14 :
+    grounder ? 333 + (random() - .5) * 30 :
+      clamp(277 - power * 78 + (random() - .5) * 35, fieldLayout.fenceY + 27, 292);
+  const fieldX = homer ? x : x, fieldY = homer ? fieldLayout.fenceY : y;
+  return { fielderIndex, ballX: x, ballY: y, fieldX, fieldY,
+    label: homer ? `${FIELDERS[fielderIndex].label} 뒤 담장` : FIELDERS[fielderIndex].label };
 }
 
 function hitDistance(type) { return type === "단타" || type === "땅볼" ? 1 : type === "2루타" ? 2 : type === "3루타" ? 3 : 4; }
