@@ -888,7 +888,7 @@ function drawBaseRunners(now) {
     state.bases.forEach((occupied, index) => {
       if (!occupied) return;
       const base = BASE_PATH[index + 1];
-      drawRunnerIdle(base.x, base.y - 5, index === 2);
+      drawRunnerIdle(base.x, base.y, index === 2);
     });
     return;
   }
@@ -905,7 +905,7 @@ function drawBaseRunners(now) {
     const point = idle ? BASE_PATH[move.endNode] : runningPoint(move, progress);
     if (idle) {
       // Base arrival becomes a settled ready-to-run pose; no running bob or slide.
-      drawRunnerIdle(point.x, point.y - 5, point.flip ?? (move.endNode === 3));
+      drawRunnerIdle(point.x, point.y, point.flip ?? (move.endNode === 3));
       continue;
     }
     const name = move.character === 2 ? "tori" : "runner";
