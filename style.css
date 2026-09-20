@@ -87,3 +87,20 @@ h2 { font-size: clamp(2rem, 4vw, 3.5rem); line-height: 1.05; letter-spacing: -.0
 .pitch-gauge b { position: absolute; left: 50%; top: -29px; transform: translateX(-50%); color: white; font-size: .9rem; text-shadow: 0 2px 3px rgba(16,35,63,.75); white-space: nowrap; }
 .pitch-gauge span { position: absolute; top: -9px; left: 50%; width: 18px; height: 44px; transform: translateX(-50%); border: 3px solid var(--navy); border-radius: 9px; background: #ffc94a; box-shadow: 0 2px 0 rgba(16,35,63,.24); }
 @media (max-width: 760px) { .mode-buttons { display: grid; }.pitch-gauge { width: 78%; bottom: 18px; } }
+
+/* Pitcher mode: spacious, touch-friendly aim selector. */
+.game-controls.pitching { grid-template-columns: minmax(0, 1fr) auto auto auto; }
+.pitch-location { display: grid; justify-items: center; gap: 5px; min-width: 150px; color: var(--navy); }
+.pitch-location[hidden] { display: none; }
+.pitch-location strong { font-size: .87rem; }
+.pitch-location small { color: var(--muted); font-weight: 700; font-size: .72rem; }
+.pitch-targets { display: grid; grid-template-columns: repeat(3, 42px); gap: 4px; padding: 5px; border-radius: 12px; background: #e9eef5; }
+.pitch-target { border: 2px solid #c3ccd9; background: white; color: var(--navy); border-radius: 8px; height: 42px; font-size: 1.12rem; font-weight: 900; touch-action: manipulation; }
+.pitch-target.selected { background: var(--yellow); border-color: var(--orange); box-shadow: inset 0 0 0 2px white; }
+.pitch-target:disabled { opacity: .68; cursor: default; }
+@media (max-width: 760px) {
+  .game-controls.pitching { grid-template-columns: 1fr; }
+  .pitch-location { justify-self: center; }
+  .pitch-targets { grid-template-columns: repeat(3, 52px); }
+  .pitch-target { height: 52px; }
+}
