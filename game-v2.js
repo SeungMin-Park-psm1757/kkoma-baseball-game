@@ -52,7 +52,7 @@ configureField("easy");
 const state = {
   screen: "home", character: 0, level: 0, unlocked: 1, score: 0, outs: 0, bases: [false, false, false],
   homeRuns: 0, phase: "idle", pitch: null, flight: null, paused: false, pauseStarted: null, resumeAction: null,
-  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, fieldAction: null, foul: null, runningPlay: null, celebration: null, effectToken: 0
+  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, fieldAction: null, foul: null, runningPlay: null, celebration: null, effectToken: 0
 };
 const BGM_TRACKS = [
   "assets/music/level-1-sunny.mp3", "assets/music/level-2-sunny.mp3", "assets/music/level-3-sunset.mp3",
@@ -81,12 +81,14 @@ function saveProgress() {
 function showScreen(name) {
   state.screen = name;
   if (name !== "game") stopBackgroundMusic();
+  if (name !== "game") $("pitchGauge").hidden = true;
   document.querySelectorAll(".screen").forEach((screen) => screen.classList.toggle("active", screen.id === `${name}Screen`));
   if (name === "character") renderCharacters();
   if (name === "level") renderLevels();
 }
 
 function renderCharacters() {
+  $("characterTitle").textContent = state.mode === "pitching" ? "누가 투수로 설까요?" : "누가 타석에 설까요?";
   $("characterCards").innerHTML = characters.map((character, index) => `
     <button class="character-card ${index === state.character ? "selected" : ""}" data-character="${index}" type="button" aria-pressed="${index === state.character}">
       <span class="character-icon"><img src="${character.asset}" alt="${character.name} 캐릭터"></span>
@@ -99,28 +101,37 @@ function renderLevels() {
   $("levelCards").innerHTML = levels.map((level, index) => {
     const locked = index + 1 > state.unlocked;
     return `<button class="level-card ${locked ? "locked" : ""}" data-level="${index}" type="button" ${locked ? "disabled" : ""}>
-      <div class="level-number">${String(index + 1).padStart(2, "0")}</div><h3>${level.name}</h3><p>목표 ${level.target}점 · ${level.type}</p>${locked ? '<span class="lock">🔒</span>' : '<small>도전 가능</small>'}
+      <div class="level-number">${String(index + 1).padStart(2, "0")}</div><h3>${level.name}</h3><p>${state.mode === "pitching" ? "3아웃 잡기" : `목표 ${level.target}점`} · ${level.type}</p>${locked ? '<span class="lock">🔒</span>' : '<small>도전 가능</small>'}
     </button>`;
   }).join("");
   document.querySelectorAll("[data-level]").forEach((button) => button.addEventListener("click", () => startGame(Number(button.dataset.level))));
 }
 
 function startGame(levelIndex) {
-  Object.assign(state, { level: levelIndex, score: 0, outs: 0, strikes: 0, bases: [false, false, false], homeRuns: 0, phase: "between", pitch: null, flight: null, action: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, paused: false });
+  Object.assign(state, { level: levelIndex, score: 0, outs: 0, strikes: 0, balls: 0, runsAllowed: 0, bases: [false, false, false], homeRuns: 0, phase: "between", pitch: null, flight: null, action: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, paused: false });
   configureField(levels[levelIndex].background);
   state.token += 1; $("gameEyebrow").textContent = `LEVEL ${levelIndex + 1}`; $("gameTitle").textContent = levels[levelIndex].name;
-  showScreen("game"); playBackgroundMusic(levelIndex); updateHud(); setMessage("공을 보고, 준비되면 눌러요!");
+  $("swingButton").textContent = state.mode === "pitching" ? "🥎 지금 던져요!" : "⚾ 지금 쳐요!";
+  showScreen("game"); playBackgroundMusic(levelIndex); updateHud(); setMessage(state.mode === "pitching" ? "게이지 가운데에서 던져요!" : "공을 보고, 준비되면 눌러요!");
   const token = state.token; setTimeout(() => { if (state.screen === "game" && token === state.token) nextPitch(); }, 850);
 }
 
 function nextPitch() {
   if (state.screen !== "game" || state.paused) return;
+  if (state.mode === "pitching") { startPitcherTurn(); return; }
   state.phase = "pitching"; state.pitch = { start: performance.now(), duration: levels[state.level].pitchMs, curve: Math.random() * 2 - 1, type: levels[state.level].type };
   state.action = { kind: "pitch", start: state.pitch.start }; state.fieldAction = null; state.foul = null; state.runningPlay = null; state.celebration = null;
   $("pitchHint").classList.remove("hide"); setMessage(`${levels[state.level].type}! 타이밍을 맞춰요.`); tone(250, .05);
 }
 
+function startPitcherTurn() {
+  state.phase = "pitchReady"; state.pitch = { start: performance.now(), duration: 820, curve: 0, type: "직구" };
+  state.action = { kind: "pitchReady", start: state.pitch.start }; state.fieldAction = null; state.foul = null; state.runningPlay = null; state.celebration = null;
+  $("pitchHint").classList.remove("hide"); $("pitchHint").textContent = "게이지 가운데에서 던져요!"; $("pitchGauge").hidden = false; setMessage("포수 글러브를 보고 던져요!");
+}
+
 function swing() {
+  if (state.mode === "pitching") { throwPitch(); return; }
   if (state.screen !== "game" || state.paused || state.phase !== "pitching") return;
   const now = performance.now(); const pitchTime = (now - state.pitch.start) / state.pitch.duration; const center = .88;
   const windowSize = levels[state.level].window + characters[state.character].bonus; const delta = pitchTime - center;
@@ -128,6 +139,50 @@ function swing() {
   if (Math.abs(delta) > windowSize) resolveStrike(delta < 0 ? "조금 빨라요" : "조금 늦었어요");
   else if (Math.abs(delta) > windowSize * (1 - levels[state.level].foulChance * 2)) resolveFoul();
   else resolveHit(Math.abs(delta));
+}
+
+function pitchGaugePosition(now = performance.now()) { return 50 + Math.sin((now - state.pitch.start) / 420) * 44; }
+
+function throwPitch() {
+  if (state.screen !== "game" || state.paused || state.mode !== "pitching" || state.phase !== "pitchReady") return;
+  const now = performance.now(), accuracy = Math.abs(pitchGaugePosition(now) - 50) / 44;
+  state.phase = "pitching"; state.pitch = { start: now, duration: Math.round(760 + accuracy * 180), curve: (pitchGaugePosition(now) - 50) / 44, type: "직구", accuracy, resolved: false };
+  state.action = { kind: "throw", start: now, outcome: null }; $("pitchGauge").hidden = true; $("pitchHint").classList.add("hide"); tone(220, .08);
+}
+
+function finishPitch() {
+  if (state.mode !== "pitching" || !state.pitch || state.pitch.resolved) return;
+  state.pitch.resolved = true; const accuracy = state.pitch.accuracy, inZone = accuracy < .38, roll = Math.random();
+  if (!inZone && roll > .18) { resolvePitchBall(); return; }
+  if (roll < .18 + accuracy * .42) { resolveCpuHit(accuracy); return; }
+  if (roll < .34 + accuracy * .18) { resolvePitchFoul(); return; }
+  resolvePitchStrike(accuracy < .16 ? "좋은 공이에요" : "스트라이크예요");
+}
+
+function resolvePitchStrike(reason) {
+  state.phase = "resulting"; state.strikes += 1; const strikeOut = state.strikes >= 3;
+  if (strikeOut) { state.outs += 1; state.strikes = 0; state.balls = 0; showEffect("삼진!", "strikeout"); playSound("strikeout"); playEffectSound("out"); }
+  else playSound("strike");
+  setMessage(strikeOut ? `${reason}! 삼진을 잡았어요.` : `${reason}! 스트라이크 ${state.strikes}/3.`); updateHud(); continuePlay(strikeOut ? 1150 : 720);
+}
+
+function resolvePitchBall() {
+  state.phase = "resulting"; state.balls += 1;
+  if (state.balls < 4) { setMessage(`볼이에요. ${state.balls}/4`); updateHud(); continuePlay(720); return; }
+  const next = [...state.bases]; let runs = 0;
+  if (next[0]) { if (next[1]) { if (next[2]) runs = 1; else next[2] = true; } next[1] = true; }
+  next[0] = true; state.bases = next; state.balls = 0; state.strikes = 0; state.runsAllowed += runs;
+  setMessage(runs ? "볼넷 밀어내기 실점!" : "볼넷! 타자가 1루로 나가요."); showEffect(runs ? "실점!" : "볼넷!", runs ? "out" : "runner"); updateHud(); continuePlay(1050);
+}
+
+function resolvePitchFoul() {
+  state.phase = "foul"; state.foul = { start: performance.now(), side: Math.random() < .5 ? -1 : 1 }; const counted = state.strikes < 2; if (counted) state.strikes += 1;
+  setMessage(counted ? `파울! 스트라이크 ${state.strikes}/3.` : "파울! 두 스트라이크에서는 카운트가 늘지 않아요."); playEffectSound("bat"); updateHud(); continuePlay(820);
+}
+
+function resolveCpuHit(accuracy) {
+  const delta = Math.min(.11, .018 + accuracy * .16 + Math.random() * .025);
+  resolveHit(delta, true);
 }
 
 function resolveStrike(reason) {
@@ -146,13 +201,15 @@ function resolveFoul() {
   playEffectSound("bat"); tone(150, .12); updateHud(); continuePlay(850);
 }
 
-function resolveHit(delta) {
+function resolveHit(delta, cpuHit = false) {
   let type = "단타"; if (delta < .008) type = "홈런"; else if (delta < .017) type = "3루타"; else if (delta < .035) type = "2루타";
-  const safeHit = battedBallSucceeded(state.level);
+  const safeHit = cpuHit ? Math.random() < .28 + (state.pitch?.accuracy || 0) * .55 : battedBallSucceeded(state.level);
   if (!safeHit && type === "홈런") type = "단타";
   if (!safeHit && Math.random() < .55) type = "땅볼";
-  const start = performance.now(), distance = hitDistance(type), preview = buildRunningPlay(state.bases, distance);
-  state.strikes = 0; playEffectSound("bat"); state.flight = { start, duration: flightDuration(type, safeHit), type, caught: false, target: chooseFlightTarget(type) };
+  const start = performance.now(), distance = hitDistance(type), duration = flightDuration(type, safeHit), target = chooseFlightTarget(type);
+  state.flight = { start, duration, type, caught: false, target };
+  const preview = buildRunningPlay(state.bases, distance, target, start + duration);
+  state.strikes = 0; playEffectSound("bat");
   state.runningPlay = { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
   if (state.action) state.action.outcome = type;
   const hitMessage = type === "단타" ? "짧은 외야 타구! 주자와 송구의 승부예요." : type === "2루타" ? "외야 깊은 타구! 2루까지 달려요." : "담장 쪽 깊은 타구! 3루에 도전해요.";
@@ -180,16 +237,34 @@ function flightDuration(type, safeHit) {
   return Math.round(base * 1.1 * (safeHit ? levels[state.level].hitFlightScale : .9));
 }
 
-function buildRunningPlay(bases, distance) {
+function buildRunningPlay(bases, distance, target = null, fieldedAt = 0) {
   const next = [false, false, false]; const moves = []; let runs = 0;
   for (let index = 2; index >= 0; index -= 1) {
     if (!bases[index]) continue;
-    const startNode = index + 1; const destination = startNode + distance; moves.push({ startNode, endNode: Math.min(4, destination), character: null });
+    const startNode = index + 1, maxNode = Math.min(4, startNode + distance);
+    let destination = maxNode;
+    if (target) {
+      destination = Math.min(4, startNode + 1);
+      while (destination < maxNode && canAutoAdvance(startNode, destination + 1, null, target, fieldedAt)) destination += 1;
+    }
+    moves.push({ startNode, endNode: destination, character: null });
     if (destination >= 4) runs += 1; else next[destination - 1] = true;
   }
-  moves.push({ startNode: 0, endNode: distance, character: state.character });
-  if (distance >= 4) runs += 1; else next[distance - 1] = true;
+  const batterMax = distance;
+  let batterDestination = batterMax;
+  if (target && distance < 4) {
+    batterDestination = 1;
+    while (batterDestination < batterMax && canAutoAdvance(0, batterDestination + 1, state.character, target, fieldedAt)) batterDestination += 1;
+  }
+  moves.push({ startNode: 0, endNode: batterDestination, character: state.character });
+  if (batterDestination >= 4) runs += 1; else next[batterDestination - 1] = true;
   prepareMoves(moves); return { bases: next, runs, moves };
+}
+
+function canAutoAdvance(startNode, destination, character, target, fieldedAt) {
+  const runnerAtBase = state.flight.start + runningDuration(destination - startNode, startNode, character);
+  const defenseAtBase = fieldedAt + fieldingReleaseDelay() + defensiveThrowDuration({ x: target.fieldX, y: target.fieldY }, BASE_PATH[destination]);
+  return runnerAtBase + 350 < defenseAtBase;
 }
 
 function buildGroundResult(bases, targetNode, leadOut, batterOut, character) {
@@ -243,20 +318,28 @@ function defensiveThrowDuration(from, to) {
 function fieldingReleaseDelay(level = state.level) { return Math.max(150, 260 - level * 18); }
 
 function buildHitRace(now, type, target) {
-  const distance = hitDistance(type), result = buildRunningPlay(state.bases, distance);
-  const legs = [], stages = []; let from = { x: target.fieldX, y: target.fieldY }, throwStart = now + fieldingReleaseDelay(), outAt = null;
-  for (const node of hitRelayNodes(type)) {
-    const destination = BASE_PATH[node], receive = throwStart + defensiveThrowDuration(from, destination);
-    const runnerArrival = state.flight.start + runningDuration(node), out = receive < runnerArrival;
-    const text = out ? (node === 1 ? "공이 먼저! 1루 아웃!" : `공이 먼저! ${destination.label} 태그 아웃!`) : `주자가 먼저! ${destination.label} 세이프!`;
-    legs.push({ node, from, throwStart, receive, throwPlayed: false }); stages.push({ at: receive, out, text, fired: false });
-    if (out) { outAt = receive; break; }
-    from = { x: destination.x, y: destination.y - 42 }; throwStart = receive + 160;
-  }
-  const batterMove = result.moves[result.moves.length - 1];
-  if (outAt) { batterMove.out = true; batterMove.outAt = outAt; result.bases[distance - 1] = false; if (state.outs === 2) result.runs = 0; }
-  const lastLeg = legs[legs.length - 1];
-  return { result, finalAt: Math.max(lastLeg.receive, outAt || state.flight.start + batterMove.duration), action: { kind: "hitRace", start: now, target, legs, stages } };
+  const planned = state.runningPlay;
+  const result = { bases: [...planned.resultBases], runs: planned.runs, moves: planned.moves.map((move) => ({ ...move })) };
+  const candidate = chooseThrowTarget(result.moves, target, now);
+  const node = candidate.endNode, from = { x: target.fieldX, y: target.fieldY }, throwStart = now + fieldingReleaseDelay();
+  const receive = throwStart + defensiveThrowDuration(from, BASE_PATH[node]);
+  const runnerArrival = state.flight.start + runningDuration(node - candidate.startNode, candidate.startNode, candidate.character);
+  const out = receive < runnerArrival;
+  const text = out ? (node === 1 ? "공이 먼저! 1루 아웃!" : `공이 먼저! ${BASE_PATH[node].label} 태그 아웃!`) : `주자가 먼저! ${BASE_PATH[node].label} 세이프!`;
+  const leg = { node, from, throwStart, receive, throwPlayed: false };
+  if (out) { candidate.out = true; candidate.outAt = receive; result.bases[node - 1] = false; if (state.outs === 2) result.runs = 0; }
+  const finalAt = Math.max(receive, state.flight.start + playDuration(result.moves));
+  return { result, finalAt, action: { kind: "hitRace", start: now, target, legs: [leg], stages: [{ at: receive, out, text, fired: false }] } };
+}
+
+function chooseThrowTarget(moves, target, now) {
+  const candidates = moves.filter((move) => move.endNode > move.startNode && move.endNode < 4).map((move) => {
+    const receive = now + fieldingReleaseDelay() + defensiveThrowDuration({ x: target.fieldX, y: target.fieldY }, BASE_PATH[move.endNode]);
+    const arrival = state.flight.start + runningDuration(move.endNode - move.startNode, move.startNode, move.character);
+    return { move, margin: receive - arrival };
+  });
+  const outCandidate = candidates.filter((candidate) => candidate.margin < 0).sort((a, b) => a.margin - b.margin)[0];
+  return (outCandidate || candidates.sort((a, b) => b.move.endNode - a.move.endNode)[0]).move;
 }
 
 function runningDuration(distance, startNode = 0, character = state.character) {
@@ -285,21 +368,28 @@ function finishFlight() {
   const race = buildHitRace(now, type, target), finalAt = race.finalAt;
   state.runningPlay = { start: state.flight.start, duration: playDuration(race.result.moves), moves: race.result.moves, resultBases: race.result.bases, runs: race.result.runs, type, resultMessage: race.action.stages[0].text, committed: false };
   state.runningPlay.resultMessage = race.action.stages[race.action.stages.length - 1].text;
-  state.fieldAction = race.action; playEffectSound("glove"); setMessage(`${target.label}가 잡아 먼저 1루로 송구해요!`); tone(620, .12); continuePlay(finalAt - now + 850);
+  state.fieldAction = race.action; playEffectSound("glove"); setMessage(`${target.label}가 잡아 ${BASE_PATH[race.action.legs[0].node].label}로 송구해요!`); tone(620, .12); continuePlay(finalAt - now + 850);
 }
 
 function commitRunningPlay() {
   const play = state.runningPlay;
   if (!play || play.committed) return;
   const basesChanged = state.bases.some((base, index) => base !== play.resultBases[index]);
-  play.committed = true; state.bases = play.resultBases; state.score += play.runs; if (play.type === "홈런") state.homeRuns += 1;
+  play.committed = true; state.bases = play.resultBases;
+  if (state.mode === "pitching") state.runsAllowed += play.runs; else state.score += play.runs;
+  if (play.type === "홈런") state.homeRuns += 1;
   updateHud(); setMessage(play.resultMessage || (play.runs ? `${play.type}! ${play.runs}점 들어왔어요!` : `${play.type}! 주자가 베이스에 도착했어요!`));
   if (basesChanged || play.runs) { showEffect(play.runs ? `${play.runs}점!` : "주자 이동!", "runner"); playSound("runner"); }
 }
 
 function continuePlay(delay) {
   const token = state.token, scheduledAt = performance.now();
-  const next = () => { if (token !== state.token || state.screen !== "game") return; updatePlayEvents(performance.now()); commitRunningPlay(); if (state.score >= levels[state.level].target) endGame(true); else if (state.outs >= 3) endGame(false); else nextPitch(); };
+  const next = () => {
+    if (token !== state.token || state.screen !== "game") return;
+    updatePlayEvents(performance.now()); commitRunningPlay();
+    if (state.mode === "pitching") { if (state.outs >= 3) endGame(true); else nextPitch(); return; }
+    if (state.score >= levels[state.level].target) endGame(true); else if (state.outs >= 3) endGame(false); else nextPitch();
+  };
   setTimeout(() => {
     if (state.paused) { const elapsedBeforePause = Math.max(0, state.pauseStarted - scheduledAt); state.resumeAction = () => continuePlay(Math.max(0, delay - elapsedBeforePause)); }
     else next();
@@ -311,13 +401,19 @@ function endGame(won) {
   if (won) { state.unlocked = Math.max(state.unlocked, Math.min(levels.length, state.level + 2)); saveProgress(); }
   $("resultBadge").textContent = won ? "★" : "↻"; $("resultTitle").textContent = won ? "참 잘했어요!" : "다시 해볼까요?";
   $("resultArt").src = won ? "assets/09-result-win.png" : "assets/10-result-encouragement.png";
-  $("resultCopy").textContent = won ? `${levels[state.level].target}점 목표를 달성했어요.` : "아웃 3번이 되었어요. 다음에는 더 늦게 눌러 보세요.";
-  $("resultScore").textContent = state.score; $("resultHomeRuns").textContent = state.homeRuns;
+  const pitching = state.mode === "pitching";
+  $("resultCopy").textContent = pitching ? `3아웃을 잡았어요. 실점은 ${state.runsAllowed}점이에요.` : won ? `${levels[state.level].target}점 목표를 달성했어요.` : "아웃 3번이 되었어요. 다음에는 더 늦게 눌러 보세요.";
+  $("resultScoreLabel").textContent = pitching ? "실점" : "점수"; $("resultHomeRunsLabel").textContent = pitching ? "아웃" : "홈런";
+  $("resultScore").textContent = pitching ? state.runsAllowed : state.score; $("resultHomeRuns").textContent = pitching ? state.outs : state.homeRuns;
   $("resultPrimary").textContent = won && state.level + 1 < levels.length ? "다음 경기  →" : "처음으로  →"; showScreen("result");
 }
 
 function updateHud() {
-  $("scoreValue").textContent = state.score; $("targetValue").textContent = levels[state.level].target; $("strikeValue").textContent = `${state.strikes} / 3`; $("outValue").textContent = `${state.outs} / 3`;
+  const pitching = state.mode === "pitching";
+  $("scoreboard").classList.toggle("pitching", pitching);
+  $("scoreLabel").textContent = pitching ? "실점" : "내 점수"; $("targetLabel").textContent = pitching ? "목표" : "목표";
+  $("scoreValue").textContent = pitching ? state.runsAllowed : state.score; $("targetValue").textContent = pitching ? "3아웃" : levels[state.level].target;
+  $("strikeValue").textContent = `${state.strikes} / 3`; $("ballBoard").hidden = !pitching; $("ballValue").textContent = `${state.balls} / 4`; $("outValue").textContent = `${state.outs} / 3`;
   ["base1", "base2", "base3"].forEach((id, index) => $(id).classList.toggle("on", state.bases[index]));
 }
 
@@ -392,6 +488,7 @@ function updatePlayEvents(now) {
 function draw() {
   const now = state.paused && state.pauseStarted ? state.pauseStarted : performance.now(); const level = levels[state.level] || levels[0];
   if (!state.paused) updatePlayEvents(now);
+  if (state.mode === "pitching" && state.phase === "pitchReady") $("pitchNeedle").style.left = `${pitchGaugePosition(now)}%`;
   ctx.clearRect(0, 0, canvas.width, canvas.height); drawBackground(level); drawBases(); drawFielders(now); drawPitcher(now); drawBaseRunners(now);
   const flightProgress = state.phase === "flight" && state.flight ? Math.min(1, (now - state.flight.start) / state.flight.duration) : null;
   if (flightProgress !== null) { drawTrajectory(); drawFieldingAction(flightProgress); }
@@ -401,7 +498,7 @@ function draw() {
     const progress = Math.min(1, (now - state.pitch.start) / state.pitch.duration);
     const pitchX = fieldLayout.mound[0], pitchY = fieldLayout.mound[1] + 10;
     drawBall(pitchX + (CONTACT.x - pitchX) * progress + Math.sin(progress * Math.PI) * state.pitch.curve * 75, pitchY + (CONTACT.y - pitchY) * progress, 7 + progress * 5);
-    if (progress >= 1 && !state.paused) resolveStrike("조금 늦었어요");
+    if (progress >= 1 && !state.paused) { if (state.mode === "pitching") finishPitch(); else resolveStrike("조금 늦었어요"); }
   } else if (state.phase === "flight" && state.flight) {
     const point = flightPoint(flightProgress); drawBall(point.x, point.y, Math.max(6, 11 - flightProgress * 4)); if (flightProgress >= 1 && !state.paused) finishFlight();
   } else if (state.phase === "foul" && state.foul) {
@@ -440,11 +537,14 @@ function drawPitcher(now) {
     const progress = Math.min(1, (now - state.pitch.start) / state.pitch.duration); frame = progress < .3 ? 1 : progress < .82 ? 4 : 0;
   }
   const x = fieldLayout.mound[0], y = fieldLayout.mound[1] + 72;
-  drawGroundShadow(x, y, 33, .18); drawOpponentFrame(frame, x, y, 78, 92);
+  drawGroundShadow(x, y, 33, .18);
+  if (state.mode === "pitching") drawFrame("pitcher", frame, x, y, 94, 112, false, state.character === 1 ? "hue-rotate(24deg)" : state.character === 2 ? "hue-rotate(55deg)" : "none");
+  else drawOpponentFrame(frame, x, y, 78, 92);
 }
 
 function drawBatter(now) {
   if (state.runningPlay) return;
+  if (state.mode === "pitching") { drawGroundShadow(264, 509, 48, .18); drawOpponentFrame(0, 264, 509, 116, 138, true); return; }
   const action = state.action; let frame = 0;
   if (action?.kind === "swing") { const elapsed = now - action.start; frame = elapsed < 110 ? 1 : action.outcome === "홈런" && elapsed > 420 ? 4 : action.outcome === "miss" ? 1 : 2; }
   drawGroundShadow(264, 509, 74, .22); drawFrame(characters[state.character].motion, frame, 264, 509, 218, 238);
@@ -598,10 +698,9 @@ function drawFieldingResult(now) {
   if (action.kind === "hitRace") {
     const firstLeg = action.legs[0];
     drawGroundShadow(at.x, at.y, 25, .18); drawOpponentFrame(now < firstLeg.throwStart ? 0 : 4, at.x, at.y, 66, 82, target.fieldX < fielder.x);
-    if (now < firstLeg.throwStart) { drawReceiver(1); drawTag(`${target.label} 포구!`, at.x, at.y + 18, "#10233f"); return; }
+    if (now < firstLeg.throwStart) { drawReceiver(firstLeg.node); drawTag(`${target.label} 포구!`, at.x, at.y + 18, "#10233f"); return; }
     const leg = action.legs.find((item) => now < item.receive) || action.legs[action.legs.length - 1];
     const legIndex = action.legs.indexOf(leg), glove = { x: BASE_PATH[leg.node].x, y: BASE_PATH[leg.node].y - 42 };
-    if (legIndex > 0) drawReceiver(leg.node - 1);
     drawReceiver(leg.node);
     if (now >= leg.throwStart && now < leg.receive) {
       const from = legIndex === 0 ? { x: at.x, y: at.y - 52 } : leg.from;
@@ -644,7 +743,9 @@ function drawCelebration(now) {
 }
 
 document.querySelectorAll("[data-screen]").forEach((button) => button.addEventListener("click", () => showScreen(button.dataset.screen)));
-$("startButton").addEventListener("click", () => { tone(440, .08); showScreen("character"); });
+function chooseMode(mode) { state.mode = mode; tone(440, .08); showScreen("character"); }
+$("startButton").addEventListener("click", () => chooseMode("batting"));
+$("pitcherStart").addEventListener("click", () => chooseMode("pitching"));
 $("characterNext").addEventListener("click", () => { tone(440, .08); showScreen("level"); });
 $("swingButton").addEventListener("click", swing); canvas.addEventListener("click", swing);
 $("pauseButton").addEventListener("click", () => togglePause(true)); $("closePause").addEventListener("click", () => togglePause(false)); $("resumeButton").addEventListener("click", () => togglePause(false));
@@ -663,8 +764,11 @@ function runSelfCheck() {
   result = buildGroundResult([true, true, false], 3, true, false, 0); console.assert(result.bases[0] && result.bases[1] && !result.bases[2], "3루 포스아웃 뒤 타자와 1루 주자는 살아야 합니다.");
   result = buildGroundResult([true, true, true], 4, false, false, 0); console.assert(result.runs === 1 && result.bases.every(Boolean), "만루에서 홈 세이프면 1점과 만루가 유지되어야 합니다.");
   console.assert(runnerFrame("runner", .5, 520, true) === 1 && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 배트 없는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
-  console.assert(hitRelayNodes("3루타").join(",") === "1,2,3", "장타 송구는 1루부터 목표 베이스까지 차례로 중계되어야 합니다.");
-  console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 바로 1루로 송구해야 합니다.");
+  const savedFlight = state.flight; state.flight = { start: 0 };
+  const directTarget = chooseThrowTarget([{ startNode: 1, endNode: 2, character: null }], { fieldX: 705, fieldY: 212 }, 2000);
+  state.flight = savedFlight;
+  console.assert(directTarget.endNode === 2, "1루 주자가 이미 2루로 향했으면 외야수는 2루에 직접 송구해야 합니다.");
+  console.assert(fieldingReleaseDelay(0) === 260 && fieldingReleaseDelay(5) === 170, "외야수는 포구 뒤 짧은 동작만 하고 곧바로 판단한 베이스에 송구해야 합니다.");
   result = buildRunningPlay([false, false, false], 1); console.assert(result.bases[0] && !result.bases[1] && !result.bases[2], "일반 단타의 타자주자는 1루에서 멈춰야 합니다.");
   console.assert(flightDuration("단타", true) === 1833 && flightDuration("단타", false) === 673, "타구 체공 시간은 세이프·아웃 난이도에 맞아야 합니다.");
   console.assert(RUNNER_SPEED_MULTIPLIER === 1.05, "주자 속도 보정값이 맞아야 합니다.");
