@@ -235,3 +235,23 @@ button { touch-action: manipulation; }
   .result-body { padding-top: 12px; padding-bottom: 17px; }
   .result-stats { margin: 10px 0 12px; }
 }
+
+/* Home-run highlight: no external image required, using the existing batter sprites. */
+.home-run-burst { position: absolute; z-index: 5; left: 50%; top: 15%;
+  transform: translateX(-50%); display: flex; align-items: center; justify-content: center;
+  gap: 12px; width: min(88%, 620px); padding: 9px 18px; pointer-events: none;
+  color: #fff7d0; white-space: nowrap; font-weight: 1000; font-size: clamp(1.35rem, 5.5vw, 3rem);
+  letter-spacing: -.05em; text-shadow: 0 4px 0 #b6381f, 0 8px 17px rgba(16,35,63,.65); }
+.home-run-burst[hidden] { display: none !important; }
+.home-run-burst.animate { animation: home-run-banner 1.7s cubic-bezier(.15,.8,.2,1) both; }
+.burst-star { display: inline-block; color: #ffe27d; font-size: .8em; animation: burst-twinkle .38s ease-in-out infinite alternate; }
+@keyframes home-run-banner {
+  0% { opacity: 0; transform: translateX(-50%) scale(.55) rotate(-5deg); }
+  14%, 65% { opacity: 1; transform: translateX(-50%) scale(1.06) rotate(0); }
+  78% { opacity: 1; transform: translateX(-50%) scale(1); }
+  100% { opacity: 0; transform: translateX(-50%) translateY(-22px) scale(1.14); }
+}
+@keyframes burst-twinkle { to { transform: scale(1.35) rotate(24deg); } }
+@media (max-width: 760px) {
+  .home-run-burst { top: 22%; width: 95%; gap: 7px; padding: 5px 6px; font-size: clamp(1.1rem,5vw,1.65rem); }
+}
