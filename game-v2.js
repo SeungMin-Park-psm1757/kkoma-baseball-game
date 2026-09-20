@@ -1009,7 +1009,7 @@ function drawBaseRunners(now) {
     }
     const name = move.character === 2 ? "tori" : "runner";
     // Do not slide at an intermediate base if a further run segment is already queued.
-    const frame = runnerFrame(name, slide ? progress : Math.min(.93, progress), elapsed, true);
+    const frame = slide ? 3 : runnerFrame(name, Math.min(.93, progress), elapsed, true);
     const bob = frame === 3 ? 0 : Math.abs(Math.sin(elapsed / 115 * Math.PI)) * 3;
     drawGroundShadow(point.x, point.y, 27, .18);
     drawFrame(name, frame, point.x, point.y - bob, 70, 78, point.flip);
