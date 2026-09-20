@@ -147,7 +147,7 @@ function renderLevels() {
 function startGame(levelIndex) {
   Object.assign(state, { level: levelIndex, score: 0, outs: 0, strikes: 0, balls: 0, runsAllowed: 0, bases: [false, false, false], homeRuns: 0, phase: "between", pitch: null, flight: null, action: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, paused: false });
   configureField(levels[levelIndex].background);
-  state.contact = null; state.homeRunAt = null; $("contactFeedback").hidden = true;
+  state.contact = null; state.homeRunAt = null; $("contactFeedback").hidden = true; $("homeRunBurst").hidden = true;
   state.token += 1; $("gameEyebrow").textContent = `LEVEL ${levelIndex + 1}`; $("gameTitle").textContent = levels[levelIndex].name;
   $("swingButton").textContent = state.mode === "pitching" ? "🥎 지금 던져요!" : "⚾ 지금 쳐요!";
   showScreen("game"); playBackgroundMusic(levelIndex); updateHud(); setMessage(state.mode === "pitching" ? "게이지 가운데에서 던져요!" : "공을 보고, 준비되면 눌러요!");
@@ -157,7 +157,7 @@ function startGame(levelIndex) {
 function nextPitch() {
   if (state.screen !== "game" || state.paused) return;
   if (state.mode === "pitching") { startPitcherTurn(); return; }
-  state.contact = null; $("contactFeedback").hidden = true;
+  state.contact = null; state.homeRunAt = null; $("contactFeedback").hidden = true;
   state.phase = "pitching"; state.pitch = { start: performance.now(), duration: levels[state.level].pitchMs, curve: Math.random() * 2 - 1, type: levels[state.level].type };
   state.action = { kind: "pitch", start: state.pitch.start }; state.fieldAction = null; state.foul = null; state.runningPlay = null; state.celebration = null;
   $("pitchHint").classList.remove("hide"); $("pitchHint").textContent = "공을 보고 눌러요!"; setMessage(`${levels[state.level].type}! 타이밍을 맞춰요.`); tone(250, .05);
@@ -343,7 +343,7 @@ function resolveHit(delta, cpuHit = false, signedDelta = 0) {
       runs: preview.runs, type, preview: true, committed: false };
   state.fieldAction = automatic?.action || null;
   if (state.action) { state.action.outcome = type; state.action.hitAt = start; }
-  if (!cpuHit && type === "홈런") state.homeRunAt = start;
+  if (!cpuHit && type === "홈런") { state.homeRunAt = start; showHomeRunBurst(); }
   if (!cpuHit) showContactFeedback(contact);
   state.phase = "flight"; updateHud();
   setMessage(caught ? `${contact.shape}! 외야수가 공을 따라가요!` :
@@ -604,7 +604,7 @@ function finishFlight() {
   if (type === "홈런") {
     const result = buildRunningPlay(state.bases, distance), duration = playDuration(result.moves);
     state.runningPlay = { start: state.flight.start, duration, moves: result.moves, resultBases: result.bases, runs: result.runs, type, committed: false };
-    state.fieldAction = null; state.celebration = { start: now }; setMessage("홈런! 공이 외야 담장을 넘어갔어요!"); showEffect("홈런!", "homerun"); playEffectSound("homerun"); continuePlay(Math.max(0, state.flight.start + duration - now) + 450); return;
+    state.fieldAction = null; state.celebration = { start: now }; setMessage("홈런! 공이 외야 담장을 넘어갔어요!"); showEffect("★ 홈런! ★", "homerun"); playSound("homerun"); playEffectSound("homerun"); continuePlay(Math.max(0, state.flight.start + duration - now) + 450); return;
   }
   if (state.runningPlay?.dynamic) {
     const play = state.runningPlay, first = state.fieldAction?.legs[0];
@@ -727,6 +727,19 @@ function playEffectSound(kind) {
   if (state.muted || !SFX_TRACKS[kind]) return;
   const audio = new Audio(SFX_TRACKS[kind]); audio.volume = kind === "homerun" ? .55 : .46;
   audio.play().catch(() => { /* sound is optional */ });
+}
+
+function showHomeRunBurst() {
+  const burst = $("homeRunBurst"), token = state.token;
+  burst.hidden = false;
+  burst.classList.remove("animate");
+  void burst.offsetWidth;
+  burst.classList.add("animate");
+  setTimeout(() => {
+    if (token !== state.token) return;
+    burst.hidden = true;
+    burst.classList.remove("animate");
+  }, 1700);
 }
 
 function showEffect(text, kind) {
