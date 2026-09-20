@@ -26,6 +26,10 @@ for (const name of ["minjun-glasses", "yuna", "tori", "toribat", "pitcher", "run
 images.runnerStand = new Image(); images.runnerStand.src = "assets/frames/runner-stand.png";
 
 const CONTACT = { x: 370, y: 430 };
+// Batting contact and pitching strike-zone coordinates are intentionally separate.
+const PITCH_ZONE = { x: 340, y: 353, width: 114, height: 102 };
+const PITCH_AIM_LABELS = ["왼쪽 위", "가운데 위", "오른쪽 위", "왼쪽 가운데", "한가운데", "오른쪽 가운데", "왼쪽 아래", "가운데 아래", "오른쪽 아래"];
+const PITCH_AIM_SYMBOLS = ["↖", "↑", "↗", "←", "●", "→", "↙", "↓", "↘"];
 const FIELD_LAYOUTS = {
   easy: { first: [894, 286], second: [480, 217], third: [65, 286], home: [480, 478], mound: [480, 280], fenceY: 132 },
   medium: { first: [842, 307], second: [480, 239], third: [116, 307], home: [480, 474], mound: [480, 307], fenceY: 126 },
@@ -52,7 +56,7 @@ configureField("easy");
 const state = {
   screen: "home", character: 0, level: 0, unlocked: 1, score: 0, outs: 0, bases: [false, false, false],
   homeRuns: 0, phase: "idle", pitch: null, flight: null, paused: false, pauseStarted: null, resumeAction: null,
-  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, fieldAction: null, foul: null, runningPlay: null, celebration: null, effectToken: 0
+  message: "준비되면 공이 날아와요.", muted: false, token: 0, action: null, strikes: 0, balls: 0, mode: "batting", runsAllowed: 0, pitchAim: { row: 1, col: 1 }, pitchLanding: null, fieldAction: null, foul: null, runningPlay: null, celebration: null, effectToken: 0
 };
 const BGM_TRACKS = [
   "assets/music/level-1-sunny.mp3", "assets/music/level-2-sunny.mp3", "assets/music/level-3-sunset.mp3",
@@ -121,13 +125,16 @@ function nextPitch() {
   if (state.mode === "pitching") { startPitcherTurn(); return; }
   state.phase = "pitching"; state.pitch = { start: performance.now(), duration: levels[state.level].pitchMs, curve: Math.random() * 2 - 1, type: levels[state.level].type };
   state.action = { kind: "pitch", start: state.pitch.start }; state.fieldAction = null; state.foul = null; state.runningPlay = null; state.celebration = null;
-  $("pitchHint").classList.remove("hide"); setMessage(`${levels[state.level].type}! 타이밍을 맞춰요.`); tone(250, .05);
+  $("pitchHint").classList.remove("hide"); $("pitchHint").textContent = "공을 보고 눌러요!"; setMessage(`${levels[state.level].type}! 타이밍을 맞춰요.`); tone(250, .05);
 }
 
 function startPitcherTurn() {
   state.phase = "pitchReady"; state.pitch = { start: performance.now(), duration: 820, curve: 0, type: "직구" };
+  state.pitchLanding = null;
   state.action = { kind: "pitchReady", start: state.pitch.start }; state.fieldAction = null; state.foul = null; state.runningPlay = null; state.celebration = null;
-  $("pitchHint").classList.remove("hide"); $("pitchHint").textContent = "게이지 가운데에서 던져요!"; $("pitchGauge").hidden = false; setMessage("포수 글러브를 보고 던져요!");
+  $("pitchHint").classList.remove("hide"); $("pitchHint").textContent = "아홉 칸 중 목표를 고르세요!";
+  $("pitchGauge").hidden = false; setMessage("위치를 고르고, 게이지가 가운데일 때 던져요!");
+  updatePitchControls();
 }
 
 function swing() {
@@ -143,19 +150,53 @@ function swing() {
 
 function pitchGaugePosition(now = performance.now()) { return 50 + Math.sin((now - state.pitch.start) / 420) * 44; }
 
+function pitchAimPoint(row = state.pitchAim.row, col = state.pitchAim.col) {
+  return { x: PITCH_ZONE.x + (col + .5) * PITCH_ZONE.width / 3, y: PITCH_ZONE.y + (row + .5) * PITCH_ZONE.height / 3 };
+}
+
+function isPitchInZone(point) {
+  return point.x >= PITCH_ZONE.x && point.x <= PITCH_ZONE.x + PITCH_ZONE.width &&
+    point.y >= PITCH_ZONE.y && point.y <= PITCH_ZONE.y + PITCH_ZONE.height;
+}
+
+function pitchLandingPoint(aim, signedGauge, random = Math.random) {
+  const accuracy = Math.abs(signedGauge);
+  return { x: aim.x + signedGauge * 82 + (random() - .5) * 4,
+    y: aim.y + (random() - .5) * (5 + accuracy * 48) };
+}
+
+function updatePitchControls() {
+  $("pitchTargets").querySelectorAll("[data-pitch-target]").forEach((button) => {
+    const row = Number(button.dataset.row), col = Number(button.dataset.col);
+    const selected = state.pitchAim.row === row && state.pitchAim.col === col;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+    button.disabled = state.paused || state.phase !== "pitchReady" || state.mode !== "pitching";
+  });
+}
+
 function throwPitch() {
   if (state.screen !== "game" || state.paused || state.mode !== "pitching" || state.phase !== "pitchReady") return;
-  const now = performance.now(), accuracy = Math.abs(pitchGaugePosition(now) - 50) / 44;
-  state.phase = "pitching"; state.pitch = { start: now, duration: Math.round(760 + accuracy * 180), curve: (pitchGaugePosition(now) - 50) / 44, type: "직구", accuracy, resolved: false };
-  state.action = { kind: "throw", start: now, outcome: null }; $("pitchGauge").hidden = true; $("pitchHint").classList.add("hide"); tone(220, .08);
+  const now = performance.now(), signedGauge = (pitchGaugePosition(now) - 50) / 44;
+  const accuracy = Math.abs(signedGauge), aim = pitchAimPoint(), landing = pitchLandingPoint(aim, signedGauge);
+  state.phase = "pitching";
+  state.pitch = { start: now, duration: Math.round(760 + accuracy * 180), curve: signedGauge,
+    type: "직구", accuracy, aim, landing, resolved: false };
+  state.pitchLanding = landing;
+  state.action = { kind: "throw", start: now, outcome: null };
+  $("pitchGauge").hidden = true; $("pitchHint").classList.add("hide");
+  setMessage(`목표: ${PITCH_AIM_LABELS[state.pitchAim.row * 3 + state.pitchAim.col]}! 공이 날아가요.`);
+  updatePitchControls(); tone(220, .08);
 }
 
 function finishPitch() {
   if (state.mode !== "pitching" || !state.pitch || state.pitch.resolved) return;
-  state.pitch.resolved = true; const accuracy = state.pitch.accuracy, inZone = accuracy < .38, roll = Math.random();
-  if (!inZone && roll > .18) { resolvePitchBall(); return; }
-  if (roll < .18 + accuracy * .42) { resolveCpuHit(accuracy); return; }
-  if (roll < .34 + accuracy * .18) { resolvePitchFoul(); return; }
+  state.pitch.resolved = true;
+  const accuracy = state.pitch.accuracy, inZone = isPitchInZone(state.pitch.landing);
+  if (!inZone) { resolvePitchBall(); return; }
+  const roll = Math.random(), hitChance = Math.min(.5, .1 + state.level * .045 + accuracy * .12);
+  if (roll < hitChance) { resolveCpuHit(accuracy); return; }
+  if (roll < hitChance + .18) { resolvePitchFoul(); return; }
   resolvePitchStrike(accuracy < .16 ? "좋은 공이에요" : "스트라이크예요");
 }
 
@@ -176,6 +217,7 @@ function resolvePitchBall() {
 }
 
 function resolvePitchFoul() {
+  if (state.action) { state.action.outcome = "foul"; state.action.hitAt = performance.now(); }
   state.phase = "foul"; state.foul = { start: performance.now(), side: Math.random() < .5 ? -1 : 1 }; const counted = state.strikes < 2; if (counted) state.strikes += 1;
   setMessage(counted ? `파울! 스트라이크 ${state.strikes}/3.` : "파울! 두 스트라이크에서는 카운트가 늘지 않아요."); playEffectSound("bat"); updateHud(); continuePlay(820);
 }
@@ -211,7 +253,7 @@ function resolveHit(delta, cpuHit = false) {
   const preview = buildRunningPlay(state.bases, distance, target, start + duration);
   state.strikes = 0; playEffectSound("bat");
   state.runningPlay = { start, duration: playDuration(preview.moves), moves: preview.moves, resultBases: preview.bases, runs: preview.runs, type, preview: true, committed: false };
-  if (state.action) state.action.outcome = type;
+  if (state.action) { state.action.outcome = type; if (cpuHit) state.action.hitAt = start; }
   const hitMessage = type === "단타" ? "짧은 외야 타구! 주자와 송구의 승부예요." : type === "2루타" ? "외야 깊은 타구! 2루까지 달려요." : "담장 쪽 깊은 타구! 3루에 도전해요.";
   state.phase = "flight"; updateHud(); setMessage(type === "홈런" ? "완벽해요! 담장 너머로 날아가요!" : type === "땅볼" ? "땅볼! 수비수가 달려와요!" : hitMessage); tone(type === "홈런" ? 700 : 520, .12);
 }
