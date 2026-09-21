@@ -922,9 +922,11 @@ function drawBattingTimingRing(progress, x, y) {
 function drawMovingFielder(index, x, y, now, flip) {
   const metrics = fielderMetrics(index), frame = fielderRunFrame(now), bob = frame ? 1.6 : -1.6;
   drawGroundShadow(x, y, metrics.shadowRadius, metrics.shadowOpacity);
-  drawFielderRunLegs(x, y, metrics.height, frame, flip);
-  // Level 1 has real alternating source poses; themed teams keep their own art with the shared leg cycle.
+  // Level 1 has alternating source poses; themed teams keep their own art.
   drawOpponentFrame(state.level === 0 ? (frame ? 1 : 0) : 0, x + (frame ? 1.2 : -1.2), y - bob, metrics.width, metrics.height, flip);
+  // Paint the procedural leg cycle in front of the full-body artwork; drawing
+  // this first hid most of the gait behind the opaque lower sprite.
+  drawFielderRunLegs(x, y, metrics.height, frame, flip);
 }
 
 function drawPitcher(now) {
@@ -1347,6 +1349,9 @@ function runSelfCheck() {
   result = buildGroundResult([true, true, true], 4, false, false, 0); console.assert(result.runs === 1 && result.bases.every(Boolean), "만루에서 홈 세이프면 1점과 만루가 유지되어야 합니다.");
   console.assert(runnerFrame("runner", .5, 520, true) === 1 && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 배트 없는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
   console.assert(fielderRunFrame(0) !== fielderRunFrame(115), "수비수 이동은 시간 기준으로 두 러닝 프레임을 번갈아 써야 합니다.");
+  console.assert(drawMovingFielder.toString().indexOf("drawOpponentFrame(") <
+    drawMovingFielder.toString().indexOf("drawFielderRunLegs("),
+    "수비수 다리 보행은 전신 이미지에 가리지 않도록 이미지 이후에 그려야 합니다.");
   console.assert(baseIdleFlip(1) && baseIdleFlip(2) && !baseIdleFlip(3), "1루·2루 대기 주자는 다음 베이스 방향, 3루 주자는 홈 방향을 봐야 합니다.");
   const infieldMetrics = fielderMetrics(3), outfieldMetrics = fielderMetrics(6);
   console.assert(infieldMetrics.height > FIELDERS[3].height && infieldMetrics.shadowOpacity > outfieldMetrics.shadowOpacity,
