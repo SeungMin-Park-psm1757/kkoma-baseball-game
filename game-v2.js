@@ -7,6 +7,7 @@ const levels = [
   { name: "챔피언 경기장", target: 10, pitchMs: 1250, window: .16, successChance: .4, hitFlightScale: 2.15, doublePlayChance: .38, foulChance: .16, type: "빠른 공 + 장애물", background: "hard", color: "#f28b7a" }
 ];
 const RUNNER_SPEED_MULTIPLIER = 1.05;
+const BATTING_TIMING_CENTER = .88;
 // Extra child-friendly assistance applies only to the batter's run to first base.
 const BATTER_FIRST_BASE_SPEED_BOOST = 1.025;
 // A second 2% defensive time adjustment: 1.02 × 1.02 = 1.0404 relative to the baseline.
@@ -198,7 +199,7 @@ function startPitcherTurn() {
 function swing() {
   if (state.mode === "pitching") { throwPitch(); return; }
   if (state.screen !== "game" || state.paused || state.phase !== "pitching") return;
-  const now = performance.now(); const pitchTime = (now - state.pitch.start) / state.pitch.duration; const center = .88;
+  const now = performance.now(); const pitchTime = (now - state.pitch.start) / state.pitch.duration; const center = BATTING_TIMING_CENTER;
   const windowSize = levels[state.level].window + characters[state.character].bonus; const delta = pitchTime - center;
   state.phase = "swinging"; state.action = { kind: "swing", start: now, outcome: null }; $("pitchHint").classList.add("hide"); tone(180, .1);
   if (Math.abs(delta) > windowSize) resolveStrike(delta < 0 ? "조금 빨라요" : "조금 늦었어요");
@@ -802,18 +803,21 @@ function draw() {
   const now = state.paused && state.pauseStarted ? state.pauseStarted : performance.now(); const level = levels[state.level] || levels[0];
   if (!state.paused) updatePlayEvents(now);
   if (state.mode === "pitching" && state.phase === "pitchReady") $("pitchNeedle").style.left = `${pitchGaugePosition(now)}%`;
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = "high";
   ctx.clearRect(0, 0, canvas.width, canvas.height); drawBackground(level); drawBases(); drawFielders(now); drawPitcher(now); drawBaseRunners(now);
   if (state.mode === "pitching") drawPitchZone();
   const flightProgress = state.phase === "flight" && state.flight ? Math.min(1, (now - state.flight.start) / state.flight.duration) : null;
-  if (flightProgress !== null) { drawTrajectory(); drawFieldingAction(flightProgress); }
+  if (flightProgress !== null) { drawTrajectory(); drawFieldingAction(flightProgress, now); }
   else if (state.phase === "resulting" && state.fieldAction) drawFieldingResult(now);
   drawCatcher(); drawHomeRunSpotlight(now); drawBatter(now); drawCelebration(now);
   if (state.phase === "pitching" && state.pitch) {
     const progress = Math.min(1, (now - state.pitch.start) / state.pitch.duration);
     const pitchX = fieldLayout.mound[0], pitchY = fieldLayout.mound[1] + 10;
     const end = state.mode === "pitching" ? state.pitch.landing : CONTACT;
-    drawBall(pitchX + (end.x - pitchX) * progress + Math.sin(progress * Math.PI) * state.pitch.curve * (state.mode === "pitching" ? 12 : 75),
-      pitchY + (end.y - pitchY) * progress, 7 + progress * 5);
+    const ballX = pitchX + (end.x - pitchX) * progress + Math.sin(progress * Math.PI) * state.pitch.curve * (state.mode === "pitching" ? 12 : 75);
+    const ballY = pitchY + (end.y - pitchY) * progress;
+    if (state.mode === "batting") drawBattingTimingRing(progress, ballX, ballY);
+    drawBall(ballX, ballY, 7 + progress * 5);
     if (progress >= 1 && !state.paused) { if (state.mode === "pitching") finishPitch(); else resolveStrike("조금 늦었어요"); }
   } else if (state.phase === "flight" && state.flight) {
     const point = flightPoint(flightProgress);
@@ -876,6 +880,53 @@ function drawOpponentFrame(frame, x, y, maxWidth, maxHeight, flip = false) {
   if (state.level >= 2) { drawStandalone("animalFielder", x, y, maxWidth, maxHeight, flip); return; }
   if (state.level === 1) { drawStandalone("redFielder", x, y, maxWidth, maxHeight, flip); return; }
   drawFrame("pitcher", frame, x, y, maxWidth, maxHeight, flip);
+}
+
+function fielderMetrics(index) {
+  const fielder = FIELDERS[index], infield = index <= 3, height = fielder.height * (infield ? 1.07 : 1);
+  return { width: height * (infield ? .78 : .72), height, shadowRadius: height * (infield ? .34 : .3), shadowOpacity: infield ? .18 : .15 };
+}
+
+function fielderRunFrame(now) { return Math.floor(now / 115) % 2; }
+
+function drawFielderRunLegs(x, y, height, frame, flip) {
+  const direction = flip ? -1 : 1, stride = frame ? 1 : -1, hipY = y - height * .28;
+  ctx.save(); ctx.lineCap = "round"; ctx.lineWidth = Math.max(2.5, height * .105); ctx.strokeStyle = "#18345b";
+  for (const side of [-1, 1]) {
+    const step = side * stride;
+    ctx.beginPath(); ctx.moveTo(x + direction * side * height * .055, hipY); ctx.lineTo(x + direction * step * height * .21, y - 5); ctx.stroke();
+    ctx.strokeStyle = "#f7fbff"; ctx.lineWidth = Math.max(2, height * .06);
+    ctx.beginPath(); ctx.moveTo(x + direction * step * height * .2, y - 5); ctx.lineTo(x + direction * step * height * .28, y - 2); ctx.stroke();
+    ctx.strokeStyle = "#18345b"; ctx.lineWidth = Math.max(2.5, height * .105);
+  }
+  ctx.restore();
+}
+
+function battingTimingRingState(progress) {
+  const approach = Math.min(1, progress / BATTING_TIMING_CENTER);
+  const closeness = Math.max(0, 1 - Math.abs(progress - BATTING_TIMING_CENTER) / .13);
+  return { outerRadius: 32 - approach * 14, innerRadius: 25 - approach * 10, closeness };
+}
+
+function drawBattingTimingRing(progress, x, y) {
+  const ring = battingTimingRingState(progress), highlighted = ring.closeness > .55;
+  ctx.save(); ctx.lineWidth = highlighted ? 2.8 : 1.7; ctx.globalAlpha = .38 + ring.closeness * .52;
+  ctx.strokeStyle = highlighted ? "#6bea9c" : "#ffd95c";
+  ctx.shadowColor = highlighted ? "rgba(107,234,156,.7)" : "rgba(255,217,92,.45)"; ctx.shadowBlur = 7;
+  ctx.beginPath(); ctx.arc(x, y, ring.outerRadius, 0, Math.PI * 2); ctx.stroke();
+  ctx.globalAlpha *= .58; ctx.lineWidth = 1.25;
+  ctx.beginPath(); ctx.arc(x, y, ring.innerRadius, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+
+function drawMovingFielder(index, x, y, now, flip) {
+  const metrics = fielderMetrics(index), frame = fielderRunFrame(now), bob = frame ? 1.6 : -1.6;
+  drawGroundShadow(x, y, metrics.shadowRadius, metrics.shadowOpacity);
+  // Level 1 has alternating source poses; themed teams keep their own art.
+  drawOpponentFrame(state.level === 0 ? (frame ? 1 : 0) : 0, x + (frame ? 1.2 : -1.2), y - bob, metrics.width, metrics.height, flip);
+  // Paint the procedural leg cycle in front of the full-body artwork; drawing
+  // this first hid most of the gait behind the opaque lower sprite.
+  drawFielderRunLegs(x, y, metrics.height, frame, flip);
 }
 
 function drawPitcher(now) {
@@ -980,7 +1031,9 @@ function drawFielders(now) {
   const active = activeFielderIndices();
   [...FIELDERS].sort((a, b) => a.y - b.y).forEach((fielder) => {
     const index = FIELDERS.indexOf(fielder); if (active.has(index)) return;
-    drawGroundShadow(fielder.x, fielder.y, fielder.height * .3, .15); drawOpponentFrame(0, fielder.x, fielder.y, fielder.height * .72, fielder.height, index === 0 || index === 4);
+    const metrics = fielderMetrics(index);
+    drawGroundShadow(fielder.x, fielder.y, metrics.shadowRadius, metrics.shadowOpacity);
+    drawOpponentFrame(0, fielder.x, fielder.y, metrics.width, metrics.height, index === 0 || index === 4);
   });
 }
 
@@ -1003,12 +1056,14 @@ function drawRunnerIdle(x, y, flip = false) {
   drawStandalone("runnerStand", x, y - 5, 56, 70, flip);
 }
 
+function baseIdleFlip(node) { return node === 1 || node === 2; }
+
 function drawBaseRunners(now) {
   if (!state.runningPlay) {
     state.bases.forEach((occupied, index) => {
       if (!occupied) return;
       const base = BASE_PATH[index + 1];
-      drawRunnerIdle(base.x, base.y, index === 0 || index === 2);
+      drawRunnerIdle(base.x, base.y, baseIdleFlip(index + 1));
     });
     return;
   }
@@ -1025,7 +1080,7 @@ function drawBaseRunners(now) {
     const point = idle ? BASE_PATH[move.endNode] : runningPoint(move, progress);
     if (idle) {
       // Base arrival becomes a settled ready-to-run pose; no running bob or slide.
-      drawRunnerIdle(point.x, point.y, move.endNode === 1 || move.endNode === 3);
+      drawRunnerIdle(point.x, point.y, baseIdleFlip(move.endNode));
       continue;
     }
     const name = move.character === 2 ? "tori" : "runner";
@@ -1140,11 +1195,16 @@ function drawTag(text, x, y, color) {
   ctx.save(); ctx.font = "900 15px sans-serif"; ctx.textAlign = "center"; const width = ctx.measureText(text).width + 20; ctx.fillStyle = "rgba(255,255,255,.94)"; ctx.beginPath(); ctx.roundRect(x - width / 2, y - 18, width, 26, 13); ctx.fill(); ctx.fillStyle = color; ctx.fillText(text, x, y); ctx.restore();
 }
 
-function drawFieldingAction(progress) {
+function drawFieldingAction(progress, now) {
   if (state.flight.type === "홈런") return;
   const target = state.flight.target, home = FIELDERS[target.fielderIndex], approach = Math.min(1, progress / .78);
   const x = home.x + (target.fieldX - home.x) * approach, y = home.y + (target.fieldY - home.y) * approach;
-  drawGroundShadow(x, y, 24, .18); drawOpponentFrame(progress < .72 ? 4 : 0, x, y, 62, 78, target.fieldX < home.x);
+  if (progress < .78) drawMovingFielder(target.fielderIndex, x, y, now, target.fieldX < home.x);
+  else {
+    const metrics = fielderMetrics(target.fielderIndex);
+    drawGroundShadow(x, y, metrics.shadowRadius, metrics.shadowOpacity);
+    drawOpponentFrame(0, x, y, metrics.width, metrics.height, target.fieldX < home.x);
+  }
 }
 
 function drawFieldingResult(now) {
@@ -1198,7 +1258,9 @@ function drawFieldingResult(now) {
 
 function drawReceiver(node) {
   const base = BASE_PATH[node], x = base.x + (node === 1 ? -10 : node === 3 ? 10 : 0), y = base.y + 8;
-  drawGroundShadow(x, y, 23, .17); drawOpponentFrame(4, x, y, 58, 74, node === 3);
+  const index = ({ 1: 3, 2: 2, 3: 0 })[node], metrics = fielderMetrics(index);
+  drawGroundShadow(x, y, metrics.shadowRadius, metrics.shadowOpacity);
+  drawOpponentFrame(4, x, y, metrics.width, metrics.height, node === 3);
 }
 
 function drawThrowBall(from, to, progress) {
@@ -1286,6 +1348,17 @@ function runSelfCheck() {
   result = buildGroundResult([true, true, false], 3, true, false, 0); console.assert(result.bases[0] && result.bases[1] && !result.bases[2], "3루 포스아웃 뒤 타자와 1루 주자는 살아야 합니다.");
   result = buildGroundResult([true, true, true], 4, false, false, 0); console.assert(result.runs === 1 && result.bases.every(Boolean), "만루에서 홈 세이프면 1점과 만루가 유지되어야 합니다.");
   console.assert(runnerFrame("runner", .5, 520, true) === 1 && runnerFrame("runner", .95, 900, true) === 3, "달리는 중에는 배트 없는 러닝 프레임, 마지막에만 슬라이딩 프레임이어야 합니다.");
+  console.assert(fielderRunFrame(0) !== fielderRunFrame(115), "수비수 이동은 시간 기준으로 두 러닝 프레임을 번갈아 써야 합니다.");
+  console.assert(drawMovingFielder.toString().indexOf("drawOpponentFrame(") <
+    drawMovingFielder.toString().indexOf("drawFielderRunLegs("),
+    "수비수 다리 보행은 전신 이미지에 가리지 않도록 이미지 이후에 그려야 합니다.");
+  console.assert(baseIdleFlip(1) && baseIdleFlip(2) && !baseIdleFlip(3), "1루·2루 대기 주자는 다음 베이스 방향, 3루 주자는 홈 방향을 봐야 합니다.");
+  const infieldMetrics = fielderMetrics(3), outfieldMetrics = fielderMetrics(6);
+  console.assert(infieldMetrics.height > FIELDERS[3].height && infieldMetrics.shadowOpacity > outfieldMetrics.shadowOpacity,
+    "베이스 수비수는 외야수보다 조금 더 안정적인 크기와 접지감을 가져야 합니다.");
+  const earlyRing = battingTimingRingState(.2), timingRing = battingTimingRingState(BATTING_TIMING_CENTER);
+  console.assert(timingRing.outerRadius < earlyRing.outerRadius && timingRing.closeness > earlyRing.closeness,
+    "타격 타이밍 링은 추천 순간에 수축하고 가장 강하게 보여야 합니다.");
   const arrivalTest = { startNode: 1, endNode: 2, character: null, duration: 500 };
   console.assert(!runnerVisualState(arrivalTest, 499, 0).idle &&
     runnerVisualState(arrivalTest, 500, 0).idle &&
